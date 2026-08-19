@@ -61,8 +61,22 @@ def save_state(state):
 
 # ---------- config page (frontmatter subset parser) ----------
 
+def parse_value(val):
+    """Parse a frontmatter scalar: plain value, quoted value, or inline flow
+    list ('[]', '["*", "tmp-*"]'). Empty value -> [] (list expected to follow)."""
+    val = val.split("#")[0].strip()
+    if val.startswith("[") and val.endswith("]"):
+        inner = val[1:-1].strip()
+        if not inner:
+            return []
+        return [item.strip().strip("\"'") for item in inner.split(",") if item.strip()]
+    val = val.strip("\"'")
+    return val if val else []
+
+
 def parse_frontmatter(text):
-    """Parse the YAML subset used by _Config.md: scalars and lists of scalars."""
+    """Parse the YAML subset used by _Config.md: scalars, inline flow lists,
+    and block lists of scalars."""
     m = re.match(r"\A---\n(.*?)\n---", text, re.DOTALL)
     if not m:
         return None
@@ -72,8 +86,8 @@ def parse_frontmatter(text):
             continue
         if re.match(r"^\S", raw) and ":" in raw:
             key, _, val = raw.partition(":")
-            key, val = key.strip(), val.split("#")[0].strip().strip("\"'")
-            data[key] = val if val else []
+            key = key.strip()
+            data[key] = parse_value(val)
         elif raw.lstrip().startswith("- ") and key is not None:
             if not isinstance(data[key], list):
                 data[key] = [data[key]] if data[key] else []
