@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 430" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/>
+    </marker>
+    <marker id="arrowAccent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#f0883e"/>
+    </marker>
+  </defs>
+
+  <!-- column headings -->
+  <text x="120" y="28" text-anchor="middle" font-size="12" fill="#8b949e" font-weight="600" letter-spacing="1">SOURCES</text>
+  <text x="415" y="28" text-anchor="middle" font-size="12" fill="#8b949e" font-weight="600" letter-spacing="1">BEARINGS</text>
+  <text x="672" y="28" text-anchor="middle" font-size="12" fill="#8b949e" font-weight="600" letter-spacing="1">KNOWLEDGE BASE</text>
+  <text x="890" y="28" text-anchor="middle" font-size="12" fill="#8b949e" font-weight="600" letter-spacing="1">CONSUMERS</text>
+
+  <!-- sources -->
+  <g>
+    <rect x="20" y="60" width="200" height="64" rx="8" fill="#161b22" stroke="#30363d"/>
+    <text x="120" y="87" text-anchor="middle" font-size="14" fill="#e6edf3" font-weight="600">Repos &amp; git history</text>
+    <text x="120" y="107" text-anchor="middle" font-size="12" fill="#8b949e">code · docs · CI · compose</text>
+
+    <rect x="20" y="160" width="200" height="64" rx="8" fill="#161b22" stroke="#30363d"/>
+    <text x="120" y="187" text-anchor="middle" font-size="14" fill="#e6edf3" font-weight="600">Dev machines</text>
+    <text x="120" y="207" text-anchor="middle" font-size="12" fill="#8b949e">local &amp; LAN, via SSH</text>
+
+    <rect x="20" y="260" width="200" height="64" rx="8" fill="#161b22" stroke="#30363d"/>
+    <text x="120" y="287" text-anchor="middle" font-size="14" fill="#e6edf3" font-weight="600">Servers &amp; deployments</text>
+    <text x="120" y="307" text-anchor="middle" font-size="12" fill="#8b949e">staging · production</text>
+  </g>
+
+  <!-- bearings engine -->
+  <g>
+    <rect x="310" y="60" width="210" height="264" rx="10" fill="#0d2137" stroke="#1f6feb"/>
+    <text x="415" y="90" text-anchor="middle" font-size="16" fill="#79c0ff" font-weight="700">Bearings</text>
+
+    <rect x="330" y="110" width="170" height="46" rx="6" fill="#0d1117" stroke="#1f6feb"/>
+    <text x="415" y="130" text-anchor="middle" font-size="13" fill="#79c0ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">/bearings-doc</text>
+    <text x="415" y="147" text-anchor="middle" font-size="11" fill="#8b949e">scan &amp; document</text>
+
+    <rect x="330" y="168" width="170" height="46" rx="6" fill="#0d1117" stroke="#1f6feb"/>
+    <text x="415" y="188" text-anchor="middle" font-size="13" fill="#79c0ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">bearings_sweep.py</text>
+    <text x="415" y="205" text-anchor="middle" font-size="11" fill="#8b949e">discover · detect change</text>
+
+    <rect x="330" y="226" width="170" height="46" rx="6" fill="#0d1117" stroke="#1f6feb"/>
+    <text x="415" y="246" text-anchor="middle" font-size="13" fill="#79c0ff" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">/bearings-ops</text>
+    <text x="415" y="263" text-anchor="middle" font-size="11" fill="#8b949e">Q&amp;A · live checks · actions</text>
+  </g>
+
+  <!-- vault -->
+  <g>
+    <rect x="580" y="60" width="185" height="264" rx="10" fill="#271b3d" stroke="#8957e5"/>
+    <text x="672" y="90" text-anchor="middle" font-size="16" fill="#d2a8ff" font-weight="700">Obsidian vault</text>
+    <g font-size="13" fill="#e6edf3">
+      <text x="672" y="130" text-anchor="middle">orientation notes</text>
+      <text x="672" y="160" text-anchor="middle">changelogs</text>
+      <text x="672" y="190" text-anchor="middle">machine notes</text>
+      <text x="672" y="220" text-anchor="middle">index · dashboard</text>
+      <text x="672" y="250" text-anchor="middle">config page</text>
+    </g>
+    <text x="672" y="300" text-anchor="middle" font-size="11" fill="#8b949e">plain Markdown — yours forever</text>
+  </g>
+
+  <!-- consumers -->
+  <g>
+    <rect x="820" y="60" width="140" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+    <text x="890" y="93" text-anchor="middle" font-size="14" fill="#e6edf3" font-weight="600">You</text>
+
+    <rect x="820" y="164" width="140" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+    <text x="890" y="188" text-anchor="middle" font-size="14" fill="#e6edf3" font-weight="600">Claude Code</text>
+    <text x="890" y="206" text-anchor="middle" font-size="11" fill="#8b949e">skills built in</text>
+
+    <rect x="820" y="268" width="140" height="56" rx="8" fill="#161b22" stroke="#30363d"/>
+    <text x="890" y="292" text-anchor="middle" font-size="14" fill="#e6edf3" font-weight="600">Codex &amp; others</text>
+    <text x="890" y="310" text-anchor="middle" font-size="11" fill="#8b949e">read the vault</text>
+  </g>
+
+  <!-- arrows: sources -> bearings -->
+  <line x1="220" y1="92"  x2="305" y2="130" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="220" y1="192" x2="305" y2="192" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="220" y1="292" x2="305" y2="254" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- bearings -> vault -->
+  <line x1="520" y1="192" x2="575" y2="192" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- vault -> consumers -->
+  <line x1="765" y1="110" x2="815" y2="92"  stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="765" y1="192" x2="815" y2="192" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="765" y1="274" x2="815" y2="292" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- live-state dashed loop -->
+  <path d="M 415 324 L 415 385 L 120 385 L 120 329" fill="none" stroke="#f0883e" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#arrowAccent)"/>
+  <text x="270" y="378" text-anchor="middle" font-size="12" fill="#f0883e">live-state verification over SSH (/bearings-ops)</text>
+</svg>
