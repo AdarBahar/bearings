@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Atlas sweep — change detection and scheduled refresh for the project vault.
+"""Bearings sweep — change detection and scheduled refresh for the project vault.
 
 Reads its configuration from the vault page `_Config.md` (frontmatter), so users
 edit settings in Obsidian and the next run picks them up. The only machine-local
-state is ~/.atlas/atlas.env (pointer to the vault) and ~/.atlas/state.json.
+state is ~/.bearings/bearings.env (pointer to the vault) and ~/.bearings/state.json.
 
 Stdlib only — no pip installs.
 """
@@ -17,16 +17,16 @@ import sys
 from datetime import date, datetime
 from pathlib import Path
 
-ATLAS_DIR = Path.home() / ".atlas"
-ENV_FILE = ATLAS_DIR / "atlas.env"
-STATE_FILE = ATLAS_DIR / "state.json"
+BEARINGS_DIR = Path.home() / ".bearings"
+ENV_FILE = BEARINGS_DIR / "bearings.env"
+STATE_FILE = BEARINGS_DIR / "state.json"
 
 MARK = {
-    "warn": ("<!-- atlas:warnings -->", "<!-- /atlas:warnings -->"),
-    "last": ("<!-- atlas:last-sweep -->", "<!-- /atlas:last-sweep -->"),
-    "month": ("<!-- atlas:month -->", "<!-- /atlas:month -->"),
-    "pending": ("<!-- atlas:pending -->", "<!-- /atlas:pending -->"),
-    "history": ("<!-- atlas:history -->", "<!-- /atlas:history -->"),
+    "warn": ("<!-- bearings:warnings -->", "<!-- /bearings:warnings -->"),
+    "last": ("<!-- bearings:last-sweep -->", "<!-- /bearings:last-sweep -->"),
+    "month": ("<!-- bearings:month -->", "<!-- /bearings:month -->"),
+    "pending": ("<!-- bearings:pending -->", "<!-- /bearings:pending -->"),
+    "history": ("<!-- bearings:history -->", "<!-- /bearings:history -->"),
 }
 
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -55,7 +55,7 @@ def load_state():
 
 
 def save_state(state):
-    ATLAS_DIR.mkdir(exist_ok=True)
+    BEARINGS_DIR.mkdir(exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
@@ -281,12 +281,12 @@ def read_pending_approvals(dash_text):
 # ---------- claude runs (refresh / create) ----------
 
 def run_claude(env, vault, machine, path):
-    claude = env.get("ATLAS_CLAUDE_BIN", "claude")
+    claude = env.get("BEARINGS_CLAUDE_BIN", "claude")
     target = path if machine["ssh"] is None else f"ssh={machine['ssh']}:{path}"
     tools = "Read,Glob,Grep,Write,Edit,Bash(git:*),Bash(ls:*)"
-    if machine["ssh"] and env.get("ATLAS_ALLOW_SSH") == "1":
+    if machine["ssh"] and env.get("BEARINGS_ALLOW_SSH") == "1":
         tools += ",Bash(ssh:*)"
-    r = run([claude, "-p", f"/atlas-doc {target}", "--output-format", "json",
+    r = run([claude, "-p", f"/bearings-doc {target}", "--output-format", "json",
              "--add-dir", str(vault), "--permission-mode", "acceptEdits",
              "--allowedTools", tools],
             cwd=path if machine["ssh"] is None else str(Path.home()), timeout=900)
@@ -308,13 +308,13 @@ def main():
     force = "--force" in sys.argv
     report_only = "--report" in sys.argv
     env = load_env()
-    if "ATLAS_VAULT_DIR" not in env:
-        print("atlas: not configured — run the /atlas-setup skill first "
+    if "BEARINGS_VAULT_DIR" not in env:
+        print("bearings: not configured — run the /bearings-setup skill first "
               f"(missing {ENV_FILE})", file=sys.stderr)
         return 1
-    vault = Path(env["ATLAS_VAULT_DIR"])
+    vault = Path(env["BEARINGS_VAULT_DIR"])
     if not vault.is_dir():
-        print(f"atlas: vault not reachable: {vault}", file=sys.stderr)
+        print(f"bearings: vault not reachable: {vault}", file=sys.stderr)
         return 1
 
     state = load_state()
@@ -325,7 +325,7 @@ def main():
             cfg = state["last_good_config"]
             warnings.append("using last-known-good configuration")
         else:
-            print("atlas: unusable _Config.md and no previous good config:\n  "
+            print("bearings: unusable _Config.md and no previous good config:\n  "
                   + "\n  ".join(errors), file=sys.stderr)
             return 1
     else:
@@ -341,7 +341,7 @@ def main():
             return 0
 
     dash = vault / "_Dashboard.md"
-    dash_text = dash.read_text() if dash.exists() else "# Atlas Dashboard\n"
+    dash_text = dash.read_text() if dash.exists() else "# Bearings Dashboard\n"
     approved = read_pending_approvals(dash_text)
 
     do_refresh = cfg["refresh_mode"] == "auto" and not report_only
@@ -424,7 +424,7 @@ def main():
     state["last_run"] = today.isoformat()
     save_state(state)
 
-    print(f"atlas sweep: {len(new)} new, {len(stale)} stale, {ok} up-to-date, "
+    print(f"bearings sweep: {len(new)} new, {len(stale)} stale, {ok} up-to-date, "
           f"${cost:.2f} spent"
           + (f", unreachable: {','.join(unreachable)}" if unreachable else ""))
     for name, machine, path, stamp in new:

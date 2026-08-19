@@ -1,15 +1,15 @@
 ---
-name: atlas-ops
-description: Answer plain-English questions about the user's projects, machines, services, and deployments — using the Atlas vault as the knowledge base, verified against live state (ssh/docker/systemd) when the question concerns what is running now. Can perform ops actions (restart, logs) when explicitly asked.
+name: bearings-ops
+description: Answer plain-English questions about the user's projects, machines, services, and deployments — using the Bearings vault as the knowledge base, verified against live state (ssh/docker/systemd) when the question concerns what is running now. Can perform ops actions (restart, logs) when explicitly asked.
 ---
 
-# atlas-ops: project & infrastructure Q&A
+# bearings-ops: project & infrastructure Q&A
 
 The argument (or the user's next message) is the question.
 
 ## Knowledge base
 
-1. `~/.atlas/atlas.env` → `ATLAS_VAULT_DIR` is the vault folder (if missing: point the user to `/atlas-setup`).
+1. `~/.bearings/bearings.env` → `BEARINGS_VAULT_DIR` is the vault folder (if missing: point the user to `/bearings-setup`).
 2. `_Index.md` — one row per project. Open only the relevant `<name>/<name>.md` (orientation) and `<name>/changelog.md` (history).
 3. Machine notes (`type: machine` frontmatter) — per-machine inventories; treat their "running" tables as snapshots, not truth.
 4. `_Config.md` — the machines list tells you how to reach each machine (`local` or `ssh=<alias>`).

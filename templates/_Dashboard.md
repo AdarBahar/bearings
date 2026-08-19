@@ -1,36 +1,36 @@
-# Atlas Dashboard
+# Bearings Dashboard
 
 Updated automatically by every sweep run. Settings live in [[_Config]].
 
 ## Warnings
 
-<!-- atlas:warnings -->
+<!-- bearings:warnings -->
 _none_
-<!-- /atlas:warnings -->
+<!-- /bearings:warnings -->
 
 ## Last sweep
 
-<!-- atlas:last-sweep -->
+<!-- bearings:last-sweep -->
 _no runs yet_
-<!-- /atlas:last-sweep -->
+<!-- /bearings:last-sweep -->
 
 ## This month
 
-<!-- atlas:month -->
+<!-- bearings:month -->
 _no runs yet_
-<!-- /atlas:month -->
+<!-- /bearings:month -->
 
 ## New projects awaiting approval
 
 Tick a checkbox to have the next sweep document that project (`create_new: ask`).
 
-<!-- atlas:pending -->
+<!-- bearings:pending -->
 _none — new projects appear here for approval when `create_new: ask`_
-<!-- /atlas:pending -->
+<!-- /bearings:pending -->
 
 ## History
 
-<!-- atlas:history -->
+<!-- bearings:history -->
 | Date | New | Stale | Actions | Cost | Notes |
 |---|---|---|---|---|---|
-<!-- /atlas:history -->
+<!-- /bearings:history -->

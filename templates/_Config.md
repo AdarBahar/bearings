@@ -13,7 +13,7 @@ owners:
 aliases: []
 ---
 
-# Atlas Configuration
+# Bearings Configuration
 
 **Edit the values above — the next sweep reads this page fresh, so changes apply automatically.** No restart or reinstall needed (including cadence changes: the OS timer ticks daily and this page decides whether it acts).
 
@@ -29,4 +29,4 @@ aliases: []
 | `aliases` | `dir-name = note-name` | Map renamed/secondary checkouts to an existing note (e.g. `garmin-sync-repo = garmin-sync`). |
 
 > [!warning] Secrets
-> This vault syncs wherever your vault syncs. Atlas records env-variable **names and purposes only**, never values — keep it that way in manual edits too.
+> This vault syncs wherever your vault syncs. Bearings records env-variable **names and purposes only**, never values — keep it that way in manual edits too.

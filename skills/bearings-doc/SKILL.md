@@ -1,15 +1,15 @@
 ---
-name: atlas-doc
-description: Generate or refresh the Atlas orientation note for a project. Scans the repo (locally or over SSH) and writes a structured note (setup, deployment, environments, config, dependencies) plus a changelog into the Atlas vault folder.
+name: bearings-doc
+description: Generate or refresh the Bearings orientation note for a project. Scans the repo (locally or over SSH) and writes a structured note (setup, deployment, environments, config, dependencies) plus a changelog into the Bearings vault folder.
 ---
 
-# atlas-doc: generate/refresh a project orientation note
+# bearings-doc: generate/refresh a project orientation note
 
 You are documenting a project into the user's Obsidian vault so they (and future Claude sessions) can get oriented fast. The argument is a local path (default: current directory) or `ssh=<alias>:<path>` for a project on a remote machine.
 
 ## Locations (resolve first)
 
-1. Read `~/.atlas/atlas.env` → `ATLAS_VAULT_DIR` is the vault folder. If missing, tell the user to run `/atlas-setup` and stop.
+1. Read `~/.bearings/bearings.env` → `BEARINGS_VAULT_DIR` is the vault folder. If missing, tell the user to run `/bearings-setup` and stop.
 2. Read `<vault>/_Config.md` frontmatter → `owners:` (GitHub users/orgs that count as "mine"), `machines:`, `aliases:` (dir-name = note-name mappings).
 3. Template: `<vault>/_templates/project.md` — read it; it is the canonical structure.
 4. Note path: `<vault>/<name>/<name>.md` where `<name>` is the repo dir name after applying `aliases`.
