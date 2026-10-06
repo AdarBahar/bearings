@@ -17,6 +17,7 @@ if [ "$(uname)" = "Darwin" ]; then
     rm -f "$PLIST"; echo "bearings: schedule removed"; exit 0
   fi
   HOUR="${TIME%%:*}"; MIN="${TIME##*:}"
+  mkdir -p "$(dirname "$PLIST")"  # a new Mac does not have this directory
   cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
