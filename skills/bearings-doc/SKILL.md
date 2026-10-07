@@ -12,7 +12,7 @@ You are documenting a project into the user's Obsidian vault so they (and future
 1. Read `~/.bearings/bearings.env` → `BEARINGS_VAULT_DIR` is the vault folder. If missing, tell the user to run `/bearings-setup` and stop.
 2. Read `<vault>/_Config.md` frontmatter → `owners:` (GitHub users/orgs that count as "mine"), `machines:`, `aliases:` (dir-name = note-name mappings).
 3. Template: `<vault>/_templates/project.md` — read it; it is the canonical structure.
-4. Note path: `<vault>/<name>/<name>.md` where `<name>` is the repo dir name after applying `aliases`.
+4. Note path: `<vault>/<name>/<name>.md` where `<name>` is the repo dir name after applying `aliases`. If that doesn't exist but `<vault>/<group>/<name>/<name>.md` does (the project is grouped under a parent project's folder), use that one and keep it there. Below, `<dir>` means the folder that holds the note; the index link is its vault-relative path without `.md`.
 
 ## Procedure
 
@@ -21,7 +21,7 @@ You are documenting a project into the user's Obsidian vault so they (and future
 3. **Write the note** following the template exactly. Real commands, ports, URLs, paths — mark genuinely undiscoverable facts "unknown" rather than guessing. `local_path`: the path, prefixed `<machine>:` for remote projects. Hosts in `environments[].host`: use the machine names from `_Config.md` and any host names found in deploy configs.
 4. **SECRETS RULE (hard):** vaults sync to cloud services. Record env file *locations* and variable *names + purpose* only. Never read `.env` files — use `.env.example` or references in code/compose.
 5. **Refresh (note exists):** preserve verbatim the `<!-- manual:start/end -->` and `<!-- manual-extra:start/end -->` fenced sections and manually added `environments` entries. Regenerate the rest; set `updated:` to today.
-6. **Changelog** — maintain `<vault>/<name>/changelog.md`, newest first. On refresh: summarize `git log --since=<previous updated>` into one dated entry (3–8 bullets grouped by theme, PR numbers linked, version tags named). First creation: seed from tags + last ~30 days. No git history (plain folder): summarize file-level changes. No new commits: leave untouched.
+6. **Changelog** — maintain `<dir>/changelog.md`, newest first. On refresh: summarize `git log --since=<previous updated>` into one dated entry (3–8 bullets grouped by theme, PR numbers linked, version tags named). First creation: seed from tags + last ~30 days. No git history (plain folder): summarize file-level changes. No new commits: leave untouched.
 7. **Index** — add/update this project's row in `<vault>/_Index.md` (link, status, ownership, stack, environments as `env@host`, updated). Keep rows alphabetized. (When invoked by the sweep for many projects, still update your own row only.)
 8. **Backlinks (owned local repos only):** ensure the repo's agent context files end with a pointer line to the vault note — `CLAUDE.md` always (create a minimal one if none exists), and `AGENTS.md` too **if it already exists** (never create AGENTS.md just for this). This makes the knowledge base discoverable by both Claude Code and Codex/other agents that read AGENTS.md. Leave changes uncommitted. Skip for external repos and remote (`ssh=`) projects.
 9. **Machine notes:** if `<vault>/<machine>/<machine>.md` exists for a remote project's machine (frontmatter `type: machine`), verify live state while connected (`docker ps`, `systemctl --user …`) and update that note's tables if this project's rows changed.

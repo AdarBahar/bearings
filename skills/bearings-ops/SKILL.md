@@ -10,7 +10,7 @@ The argument (or the user's next message) is the question.
 ## Knowledge base
 
 1. `~/.bearings/bearings.env` → `BEARINGS_VAULT_DIR` is the vault folder (if missing: point the user to `/bearings-setup`).
-2. `_Index.md` — one row per project. Open only the relevant `<name>/<name>.md` (orientation) and `<name>/changelog.md` (history).
+2. `_Index.md` — one row per project. Open only the relevant note (orientation) and the `changelog.md` next to it (history). Follow the index link: a note is at `<name>/<name>.md`, or `<group>/<name>/<name>.md` when grouped under a parent project, whose `<group>/<group>.md` describes the whole system.
 3. Machine notes (`type: machine` frontmatter) — per-machine inventories; treat their "running" tables as snapshots, not truth.
 4. `_Config.md` — the machines list tells you how to reach each machine (`local` or `ssh=<alias>`).
 
