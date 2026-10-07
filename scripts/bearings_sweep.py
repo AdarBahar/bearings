@@ -263,8 +263,17 @@ done'''
 
 # ---------- vault pages ----------
 
-def note_updated(vault, name):
+def note_path(vault, name):
+    """A project's note: <vault>/<name>/<name>.md, or one level down when it is
+    grouped under a parent project (<vault>/<group>/<name>/<name>.md)."""
     note = vault / name / f"{name}.md"
+    if note.exists():
+        return note
+    return next(iter(sorted(vault.glob(f"*/{name}/{name}.md"))), note)
+
+
+def note_updated(vault, name):
+    note = note_path(vault, name)
     if not note.exists():
         return None
     m = re.search(r"^updated:\s*(\S+)", note.read_text(), re.MULTILINE)
