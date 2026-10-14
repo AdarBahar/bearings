@@ -2,139 +2,153 @@
 
 **A second brain for your development environment.**
 
-Bearings builds and maintains a persistent knowledge base for your projects, machines, and deployments, so technical context does not disappear between coding sessions, machines, or months away from a project. It captures what you need to get your bearings quickly: **how a project is structured, how to run it, where it is deployed, configuration locations, dependencies, services, URLs, infrastructure, and what recently changed.**
+## Purpose
 
-The knowledge needed to work on a project rarely lives in one place — some is in the repo (README, compose files, CI, `.env.example`), some outside it (which machine runs what, ports, databases, SSH aliases, deploy processes), and some only in your memory. Bearings turns all of it into a **persistent, human-readable knowledge base in your Obsidian vault** that doubles as **architecture and operational context for coding agents**: Claude Code uses it directly through the Bearings skills, and pointers in `CLAUDE.md` / `AGENTS.md` make it discoverable to Codex and other agents.
+Bearings keeps a set of notes about your projects, machines and deployments in your Obsidian vault.
+Each note tells you how a project is built, how to run it, where it runs, and what changed recently.
 
-> The goal: come back to any project after three months and understand how it works, how to run it, and where everything lives in under five minutes.
+The goal: you come back to a project after three months, and in five minutes you know how it works and where everything is.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.svg">
   <img alt="Bearings architecture: repos, dev machines, and servers feed the Bearings skills and sweep, which maintain an Obsidian knowledge base consumed by you, Claude Code, and other coding agents. Live-state questions are verified over SSH." src="assets/architecture-light.svg">
 </picture>
 
-## Quick start
+## Benefits
 
-Requirements: [Claude Code CLI](https://claude.com/claude-code), Python 3, Git, an Obsidian vault. Remote machines need a non-interactive SSH alias (key auth).
+- **No lost knowledge.** Information that was only in your memory or shell history is now in a note: ports, databases, SSH hosts, deploy steps.
+- **Notes that stay current.** A scheduled sweep (daily or weekly) finds the notes that are out of date and can refresh them.
+- **Better coding agents.** Claude Code reads the notes through the Bearings skills. Other agents find them through a pointer in `CLAUDE.md` or `AGENTS.md`.
+- **Answers in plain English.** Ask "what runs on my server?" and Bearings checks the live state before it answers.
+- **No secrets in the notes.** The notes contain the names of the variables, never their values.
+- **Cost control.** The dashboard shows the token use and cost of each run, with a monthly total.
+
+## Index of skills and tools
+
+| Item | Type | Function |
+|---|---|---|
+| `/bearings-setup` | skill | Sets up Bearings: finds your vault, code folders and SSH hosts, asks your settings, and writes the first notes |
+| `/bearings-doc` | skill | Writes or refreshes the note and the changelog of one project, on this machine or over SSH |
+| `/bearings-ops` | skill | Answers questions about your projects and machines. For questions about the current state, it does live checks first |
+| `scripts/bearings_sweep.py` | script | Finds new and out-of-date projects, writes the dashboard and can start refreshes |
+| `scripts/install-schedule.sh` | script | Installs or removes the daily timer (launchd, systemd or cron) |
+
+## How to use
+
+### Requirements
+
+- [Claude Code](https://claude.com/claude-code)
+- Python 3 and Git
+- An Obsidian vault
+- For remote machines: an SSH alias that logs in with a key, without a prompt
+
+### Install
 
 ```bash
 git clone https://github.com/AdarBahar/bearings
 cd bearings
 ./install.sh                 # links the skills into ~/.claude/skills
-claude "/bearings-setup"     # interactive onboarding
+claude "/bearings-setup"     # asks your settings and writes the first notes
 ```
 
-Onboarding finds your Obsidian vaults, code directories, SSH aliases (live-tested), and GitHub identity; asks how automated refreshes should behave; creates the vault structure; and documents a few representative projects first so you can review the output before backfilling everything. Installing the daily scheduler is optional.
+The setup writes a few notes first, so that you can examine them before it does all the projects.
+The daily timer is optional.
 
-Daily use:
+### Daily use
 
 ```bash
-claude "/bearings-doc"                        # document/refresh the current project
-claude "/bearings-ops <question>"             # ask about projects or infrastructure
-python3 scripts/bearings_sweep.py --force     # discover & refresh now (--report: detect only)
-scripts/install-schedule.sh --uninstall       # remove the scheduler
+claude "/bearings-doc"                        # write or refresh the note of the current project
+claude "/bearings-ops <question>"             # ask about your projects or machines
+python3 scripts/bearings_sweep.py --report    # find new and out-of-date notes only (no cost)
+python3 scripts/bearings_sweep.py --force     # run a sweep now
+scripts/install-schedule.sh --uninstall       # remove the timer
 ```
 
-## What you get
-
-**Project orientation notes.** One compact note per project: what it does, architecture and components, quick-start commands, environments and URLs, local dev setup, deployment process, configuration file locations and variable names (never values), dependencies, services, and where the project lives on your machines. Machine-readable frontmatter, human-readable Markdown. Protected manual sections — your next-steps, open questions, decisions — survive every regeneration.
-
-**Project changelogs.** A summarized changelog per project, derived from Git history. Each refresh appends what changed since the last update.
-
-**Machine and deployment notes.** Machine-level knowledge of where things run: services, containers, shared databases, ports, project locations — operational knowledge kept alongside project architecture instead of scattered across shell history and memory.
-
-**Persistent context for coding agents.** Instead of starting cold every session ("Where is the database? How is this deployed? What port?"), agents start from the knowledge base. Claude Code integration is built in through the skills. For repos you own, Bearings adds an orientation-doc pointer to `CLAUDE.md` (always) and `AGENTS.md` (when the repo already has one), so Codex and other agents that read those files — or are given vault access — start oriented. The interactive skills and live-state checks are Claude Code features; other agents consume the generated Markdown.
-
-**Plain-English Q&A — with live verification.** Ask anything:
+Example questions:
 
 ```bash
 claude "/bearings-ops how do I run project-a locally?"
 claude "/bearings-ops which projects use the shared Postgres server?"
-claude "/bearings-ops what's currently running on my server?"
+claude "/bearings-ops what is running on my server now?"
 ```
 
-Procedural and architectural questions are answered from the notes. Questions about *current state* are verified live first — Docker containers, systemd/launchd services, listening ports, PM2 processes — over the SSH access you configured; if a machine is unreachable, Bearings answers from the last documented state, labeled with its date. Asking *how* to do something returns instructions; asking Bearings to *do* it ("restart project-a") performs the action — directly for dev/local targets, with explicit confirmation for staging and production.
+If you ask how to do something, Bearings tells you the steps. If you ask it to do something ("restart project-a"), it does it. For staging and production, it asks you to confirm the exact command first.
 
-**A dashboard in Obsidian.** Every sweep records new/stale/up-to-date projects, unreachable machines, actions performed, token usage, estimated cost, monthly totals, and budget warnings. Newly discovered projects appear as checkboxes you approve directly from Obsidian.
-
-## How it works
-
-Three pieces, connected by the vault:
-
-1. **`/bearings-doc`** (skill) scans a project — locally or over SSH — and creates or refreshes its orientation note and changelog.
-2. **`bearings_sweep.py`** (dependency-free Python) discovers projects, detects stale notes, tracks new projects, processes dashboard approvals, optionally triggers refreshes, and updates the dashboard with usage and cost.
-3. **`/bearings-ops`** (skill) answers questions from the knowledge base and verifies live state when the question depends on what is running now.
-
-The Markdown files are the persistent layer — useful with or without any agent session. A typical vault:
+## What you get
 
 ```text
 Bearings/
-├── _Config.md          ← configuration (edit in Obsidian)
+├── _Config.md          ← your settings (edit in Obsidian)
 ├── _Dashboard.md       ← sweep results, costs, approvals
-├── _Index.md           ← one row per project
+├── _Index.md           ← one row for each project
 ├── project-a/
-│   ├── project-a.md    ← orientation: Resume here · Quick start · Environments
-│   └── changelog.md       · Deployment · Configuration · Dependencies · Architecture · Links
+│   ├── project-a.md    ← the note: resume here, quick start, environments,
+│   └── changelog.md       deployment, configuration, dependencies, architecture
 └── linux-laptop/
-    └── linux-laptop.md ← machine note
+    └── linux-laptop.md ← a machine note
 ```
 
-The intention is **orientation, not exhaustive documentation** — notes tell you where to look and how things fit; repo docs remain the source of depth.
+- **Project note:** what the project does, its parts, how to start it, its environments and URLs, how to deploy it, where its configuration is, and its dependencies. Text that you write in the "Resume here" section stays after each refresh.
+- **Changelog:** a summary of the Git history. Each refresh adds the new changes.
+- **Machine note:** the services, containers, databases and ports of one machine.
+- **Dashboard:** the result of each sweep. New projects show as checkboxes. Tick one to approve its note.
+- **Group:** you can put related projects one level down under a parent project, for example `my-app/api/api.md`. Bearings finds them there.
 
-## Configuration
+The notes help you find your way. They do not replace the documentation in the repository.
 
-Configuration lives in the vault as frontmatter on `_Config.md` — edit it in Obsidian (from any synced device) and the next sweep reads it. No reinstalls: the OS timer ticks daily and the page decides what happens.
+## Settings
+
+The settings are the frontmatter of `_Config.md` in the vault. Edit them in Obsidian. The next sweep reads them. You do not have to install again.
 
 ```yaml
 ---
 cadence: weekly-monday        # daily | weekly-<weekday> | manual
 refresh_mode: report-only     # report-only | auto
 create_new: ask               # ask | auto | never
-budget_alert_usd: 0           # monthly warning threshold (0 = off)
+budget_alert_usd: 0           # monthly cost warning (0 = off)
 
 machines:
   - "mac | local | ~/Code"
   - "linux-laptop | ssh=linux | ~/Code"
 
-include: ["*"]                # project folder patterns to track
-exclude: ["tmp-*"]            # exclude wins; scope per machine: "linux-laptop:tmp-*"
+include: ["*"]                # project folders to track
+exclude: ["tmp-*"]            # exclude has priority; "linux-laptop:tmp-*" applies to one machine
 
-owners:                       # GitHub users/orgs whose repos count as yours
+owners:                       # GitHub users or organizations whose repositories are yours
   - your-github-username
 
-aliases:                      # map renamed/secondary checkouts to one note
+aliases:                      # one note for a folder with a different name
   - "old-directory-name = project-name"
 ---
 ```
 
-**Refresh model — detection is cheap, regeneration is not.** The sweep separates change *detection* (free — date comparisons and one SSH call per machine) from AI-powered *refreshes* (spend Claude usage). `refresh_mode: report-only` (default) only reports stale notes on the dashboard; `auto` invokes `/bearings-doc` for them. `create_new` controls newly discovered projects: `ask` queues them as dashboard checkboxes, `auto` documents them immediately, `never` ignores them. Non-Git folders are tracked only when explicitly included or already documented.
+- **`refresh_mode`:** to find out-of-date notes costs nothing. To refresh a note uses Claude tokens. With `report-only` (the default), the sweep only lists the out-of-date notes. With `auto`, it runs `/bearings-doc` for them.
+- **`create_new`:** what to do with a new project. `ask` puts a checkbox on the dashboard. `auto` writes the note immediately. `never` ignores it.
+- **Folders without Git:** Bearings tracks them only if an include pattern names them, or if they already have a note.
+- **Remote machines:** each sweep finds the projects over SSH. A headless Claude run can use SSH only if you allow it during the setup. This setting is in `~/.bearings/bearings.env`.
 
-**Remote machines** are configured as SSH aliases (`name | ssh=alias | dirs`). Discovery over SSH is part of every sweep; letting *headless Claude runs* use SSH is a separate opt-in made during onboarding, stored with other machine-local settings in `~/.bearings/bearings.env`.
+## Security
 
-## Security model
+- **No secret values.** The notes contain the names of the variables and where the files are. `/bearings-doc` does not read `.env` files. The vault syncs to other devices, so treat it as semi-public.
+- **No changes to other people's repositories.** A repository that is not in `owners` gets a note in the vault only. Bearings does not change its files.
+- **Actions only on request.** A question gets an answer. An instruction gets an action. Staging and production need your confirmation.
+- **Small permissions for headless runs.** A scheduled run can read and write the vault and use `git` and `ls`. It can use SSH only if you allowed it.
+- **No hidden cost.** The dashboard shows the tokens and the cost of each automatic run, with a monthly total and an optional warning.
 
-- **No secret values, ever.** Notes record env-file locations and variable names/purposes. `/bearings-doc` never reads `.env` files — only safe sources like `.env.example` and references in code or deploy configs. Treat the vault folder as semi-public: it syncs wherever your vault syncs (Obsidian Sync, iCloud, Google Drive).
-- **External repositories are never modified.** Repos not matching your `owners:` list are documented in the vault only; no file in their working tree is created or changed.
-- **Actions are explicit and gated.** "How do I restart X?" returns instructions; "restart X" acts — and staging/production actions require confirmation of the exact command first.
-- **Headless permissions are minimal and declared.** Scheduled runs get read/write on the vault plus `git`/`ls`, and SSH only if you opted in.
-- **Nothing spends silently.** Every automated run's tokens and estimated cost land on the dashboard, with monthly totals and an optional budget alert.
-
-## Repository internals
+## Repository contents
 
 ```text
-skills/bearings-setup/       interactive onboarding and configuration
-skills/bearings-doc/         project scanner → orientation notes + changelogs (local & SSH)
-skills/bearings-ops/         Q&A over the vault, live-state verification, gated actions
-scripts/bearings_sweep.py    discovery, staleness detection, approvals, dashboard, cost tracking
-scripts/install-schedule.sh  daily trigger: launchd (macOS) / systemd user timer (Linux) / cron
-templates/                   _Config.md, _Dashboard.md, project note template
-assets/                      architecture diagram (light/dark)
+skills/bearings-setup/       setup and settings
+skills/bearings-doc/         project scan → note and changelog (local and SSH)
+skills/bearings-ops/         questions, live checks, actions with confirmation
+scripts/bearings_sweep.py    discovery, out-of-date check, approvals, dashboard, cost
+scripts/install-schedule.sh  daily timer: launchd (macOS), systemd user timer (Linux), or cron
+templates/                   _Config.md, _Dashboard.md and the project note template
+assets/                      architecture diagram (light and dark)
 install.sh                   links the skills into ~/.claude/skills
 ```
 
-The daily trigger does not itself cause an AI refresh — the configured cadence and refresh policy determine what each sweep actually does.
-
-**Design principles:** persistent over conversational · human-readable Markdown over opaque memory stores · the same knowledge serves you and your agents · orientation over exhaustive documentation · live state verified when it matters · architecture in the vault, credentials never.
+The daily timer does not always start a refresh. The `cadence` and `refresh_mode` settings decide what each sweep does.
 
 ## License
 
