@@ -28,7 +28,8 @@ You are setting up Bearings for this user. Be interactive — use AskUserQuestio
 6. **Write the config:**
    - `~/.bearings/bearings.env`: `BEARINGS_VAULT_DIR`, `BEARINGS_HOME`, `BEARINGS_CLAUDE_BIN` (resolve with `which claude`), `BEARINGS_ALLOW_SSH`.
    - `<vault>/_Config.md` from `templates/_Config.md`, frontmatter filled with the answers. This page is the source of truth from now on — tell the user they edit settings there.
-   - `<vault>/_Dashboard.md` and `<vault>/_templates/project.md` from templates (skip any that exist).
+   - `<vault>/_Dashboard.md` and `<vault>/_templates/{project,deployment,archive,machine,group}.md` from templates (skip any that exist; on a re-run, offer to replace a template that differs from the repo copy).
+   - `<vault>/_Deployments.base` from `templates/_Deployments.base`. Replace `__BEARINGS_FOLDER__` with the vault-relative path of the Bearings folder (for example `Projects/Dev`). Skip it if it exists.
    - `<vault>/_Index.md` if missing.
 
 7. **Seed gradually.** Offer to document 2–3 representative repos now (pick a complex deployed one and a simple one) so the user can review the format before bulk backfill. Run the `/bearings-doc` procedure for the chosen repos. Then tell them how to backfill the rest (`python3 $BEARINGS_HOME/scripts/bearings_sweep.py --force` with `create_new: auto`, or approving checkboxes in the dashboard).

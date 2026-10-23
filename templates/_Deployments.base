@@ -1,0 +1,160 @@
+filters:
+  and:
+    - 'type == "deployment"'
+    - 'file.inFolder("__BEARINGS_FOLDER__")'
+    - '!file.inFolder("__BEARINGS_FOLDER__/_templates")'
+
+formulas:
+  age_days: 'if(verified, (today() - date(verified)).days, "")'
+  stale: 'if(verified, if((today() - date(verified)).days > 60, "stale", "ok"), "never")'
+
+properties:
+  project:
+    displayName: Project
+  env:
+    displayName: Env
+  status:
+    displayName: Status
+  host:
+    displayName: Host
+  urls:
+    displayName: URLs
+  runtime:
+    displayName: Runtime
+  process:
+    displayName: Process
+  port:
+    displayName: Port
+  run_as:
+    displayName: User
+  app_path:
+    displayName: Path
+  database:
+    displayName: Database
+  deploy_method:
+    displayName: Deploy
+  verified:
+    displayName: Verified
+  formula.age_days:
+    displayName: Days since check
+  formula.stale:
+    displayName: Freshness
+
+views:
+  - type: table
+    name: All deployments
+    filters:
+      and:
+        - 'status != "retired"'
+    order:
+      - project
+      - env
+      - status
+      - host
+      - urls
+      - runtime
+      - process
+      - database
+      - verified
+    groupBy:
+      property: host
+      direction: ASC
+
+  - type: table
+    name: Linked to this note
+    filters:
+      and:
+        - 'status != "retired"'
+        - or:
+            - 'if(project, project == this.file.asLink(), false)'
+            - 'if(host, host == this.file.asLink(), false)'
+    order:
+      - file.name
+      - project
+      - env
+      - status
+      - host
+      - urls
+      - runtime
+      - process
+      - port
+      - run_as
+      - app_path
+      - database
+      - deploy_method
+      - verified
+
+  - type: table
+    name: Group members
+    filters:
+      and:
+        - 'status != "retired"'
+        - 'list(this.members).contains(project)'
+    order:
+      - project
+      - env
+      - status
+      - host
+      - urls
+      - verified
+
+  - type: table
+    name: Production
+    filters:
+      and:
+        - 'env == "prod"'
+        - 'status != "retired"'
+    order:
+      - project
+      - status
+      - host
+      - urls
+      - process
+      - database
+      - deploy_method
+      - verified
+
+  - type: table
+    name: Needs a check
+    filters:
+      and:
+        - 'status != "retired"'
+        - or:
+            - 'formula.stale != "ok"'
+            - 'status == "unknown"'
+    order:
+      - project
+      - env
+      - host
+      - status
+      - verified
+      - formula.age_days
+      - formula.stale
+
+  - type: table
+    name: Databases
+    filters:
+      and:
+        - 'if(database, true, false)'
+    order:
+      - database
+      - project
+      - env
+      - host
+      - db_roles
+      - backups
+    groupBy:
+      property: host
+      direction: ASC
+
+  - type: table
+    name: Retired
+    filters:
+      and:
+        - 'status == "retired"'
+    order:
+      - project
+      - env
+      - host
+      - urls
+      - updated
