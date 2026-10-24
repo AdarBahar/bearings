@@ -35,6 +35,13 @@ class TestTemplates(unittest.TestCase):
         self.assertIn('project: "[[PROJECT_NAME]]"', text)
         self.assertIn('host: "[[MACHINE]]"', text)
 
+    def test_deployment_hints_list_platform_values(self):
+        # Store listings, GitHub hosts and servers that are not yours need these values.
+        text = (TEMPLATES / "deployment.md").read_text()
+        self.assertIn("| store | testing", text)
+        self.assertIn("| github-actions", text)
+        self.assertIn('"[[Testing]]"', text)
+
     def test_base_has_folder_placeholder(self):
         text = (TEMPLATES / "_Deployments.base").read_text()
         self.assertIn("__BEARINGS_FOLDER__", text)
