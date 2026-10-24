@@ -34,7 +34,7 @@ updated: YYYY-MM-DDTHH:MM
 %% File name: PROJECT_NAME@<env>.md. One note for each running instance.
 env: prod | staging | qa | test | lan | preview | ci | store
 status: running | stopped | planned | retired | unknown
-host: the machine note name, never an SSH alias
+project, host: quoted links, for example host: "[[server-1]]". A plain name hides the note from the views. Never an SSH alias.
 runtime: pm2 | systemd | systemd-user | docker | launchd | cron | static | cpanel | store
 deploy_method: github-actions | script | git-pull | manual | store-upload | ftp
 database: engine@machine/db, for example postgresql-16@server-1/app

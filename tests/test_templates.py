@@ -29,6 +29,12 @@ class TestTemplates(unittest.TestCase):
                     "deploy_method", "verified", "verified_how"]:
             self.assertIn(key, data)
 
+    def test_deployment_links_are_quoted_wikilinks(self):
+        # The Base views compare project and host with this.file.asLink().
+        text = (TEMPLATES / "deployment.md").read_text()
+        self.assertIn('project: "[[PROJECT_NAME]]"', text)
+        self.assertIn('host: "[[MACHINE]]"', text)
+
     def test_base_has_folder_placeholder(self):
         text = (TEMPLATES / "_Deployments.base").read_text()
         self.assertIn("__BEARINGS_FOLDER__", text)
