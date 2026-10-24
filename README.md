@@ -97,7 +97,7 @@ Bearings/
 - **Deployment note:** one running instance: host, URLs, paths, user, process, port, database, deploy method, and the date of the last live check. The facts are properties, so the Base can show them as tables for each project, machine or env.
 - **Changelog:** a summary of the Git history. Each refresh adds the new changes.
 - **Archive:** the history of the notes. Before Bearings replaces a fact, it copies the old text here with the date and the reason.
-- **Machine note:** the facts of one machine. It shows the deployments on the machine from the Base.
+- **Machine note:** the facts of one machine. It shows the deployments on the machine from the Base. Hosts that are not your machines also get a machine note: `Stores` (app store listings), `GitHub` (Pages and scheduled Actions) and `Testing` (services on servers that are not yours).
 - **Dashboard:** the result of each sweep. New projects show as checkboxes. Tick one to approve its note.
 - **Group:** you can put related projects one level down under a parent project, for example `my-app/api/api.md`. Bearings finds them there.
 

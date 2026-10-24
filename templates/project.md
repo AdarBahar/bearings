@@ -21,7 +21,7 @@ doc_api:
 updated: YYYY-MM-DDTHH:MM
 verified:
 ---
-%% Rules: current facts only. Before you change a fact, move the old text to archive.md. Empty = does not apply. "unknown" = applies, value not known. Never write a secret value. Delete these %% hints when you fill the note. %%
+%% Rules: current facts only. Before you change a fact, move the old text to archive.md. Empty = does not apply. "unknown" = applies, value not known. Never write a secret value. deploy_scope: public | private | lan | none. Quote a YAML value that contains ": ". Delete these %% hints when you fill the note. %%
 
 # PROJECT_NAME
 

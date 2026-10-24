@@ -23,7 +23,7 @@ You are documenting a project into the user's Obsidian vault so they (and future
 | `<dir>/changelog.md` | Code changes, from git. |
 | `<dir>/archive.md` (`type: archive`) | Old facts, ops events, done items. Newest first. Add entries only. |
 
-A deployment is an instance that runs without a person at the keyboard: a server, a LAN service, a store listing, a scheduled job. A dev server on `localhost` is not a deployment; write its command in Quick start. A project with no deployment (scripts, CLI tools, libraries) gets `deploy_scope: none` and no deployment notes.
+A deployment is an instance that runs without a person at the keyboard: a server, a LAN service, a store listing, a scheduled job. A dev server on `localhost` is not a deployment; write its command in Quick start. A dev instance that other clients use over the LAN is a deployment (`@lan`). A scheduled job on a workstation (launchd, cron) is a deployment (`@lan`) on that workstation; the workstation gets a machine note. A project with no deployment (scripts, CLI tools, libraries) gets `deploy_scope: none` and no deployment notes.
 
 ## Note rules
 
@@ -33,6 +33,8 @@ A deployment is an instance that runs without a person at the keyboard: a server
 - **Properties for data.** Values that a reader searches or compares (host, path, port, URL, user, process, database) go in the properties, one value per property. Text explains; it does not repeat the properties.
 - **Empty or unknown.** Leave a property empty if it does not apply. Write `unknown` if it applies but you cannot find the value. Never guess.
 - **Names.** `host`: a quoted link to the machine note, `host: "[[server-1]]"`, never an SSH alias (put that in `ssh`). `project`: a quoted link to the project note, `project: "[[app]]"`. The Base views compare these properties with links; a plain name does not match, and the deployment is missing from the table of that machine or project. `database`: `engine@machine/db`. `clones`: `machine:path`. `env`, `status`, `runtime`, `deploy_method`: only the values in the template hints.
+- **Hosts that are not your machines.** App store listings: `host: "[[Stores]]"`, `env: store`, one note per store (`<name>@store-chrome.md`). GitHub Pages and scheduled GitHub Actions: `host: "[[GitHub]]"`. A service on a server that is not yours: `host: "[[Testing]]"`, `env: testing`. Each of these hosts has a note with `type: machine` and `kind: platform` or `external`. Make the note if it does not exist.
+- **YAML.** Quote a property value that contains `: ` or starts with `:` (`port: ":3000"`, `summary: "…: …"`). Obsidian cannot read the properties of a note with invalid YAML, and the note is missing from the views.
 - **Dates.** `updated`: date and time of this write (`YYYY-MM-DDTHH:MM`). `verified`: change it only when you checked the deployment against the live system in this run; then set `verified_how: live`. Each section with facts gets the stamp line `*Updated YYYY-MM-DD · source: repo|live|owner*`; change the stamp only for a section whose facts you checked.
 - **Retired.** A deployment that stopped for good: set `status: retired`, add a "Replaced" entry to `archive.md`, keep the note.
 

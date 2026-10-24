@@ -12,7 +12,7 @@ The argument (or the user's next message) is the question.
 1. `~/.bearings/bearings.env` → `BEARINGS_VAULT_DIR` is the vault folder (if missing: point the user to `/bearings-setup`).
 2. `_Index.md` — one row per project. Open only the relevant note (current state). Follow the index link: a note is at `<name>/<name>.md`, or `<group>/<name>/<name>.md` when grouped under a parent project, whose `<group>/<group>.md` describes the whole system. Next to it: `changelog.md` (code history) and `archive.md` (old facts and ops events).
 3. Deployment notes (`<name>@<env>.md`, `type: deployment`) — one running instance each. The frontmatter holds the facts: `host`, `ssh`, `urls`, `health_url`, `app_path`, `config_path`, `run_as`, `runtime`, `process`, `port`, `database`, `deploy_method`. `verified` tells the date of the last live check. For a question across projects ("what runs on server X", "which prod uses PostgreSQL"), grep the frontmatter of `*@*.md` files. Ignore `status: retired` unless asked.
-4. Machine notes (`type: machine` frontmatter) — per-machine facts. An old machine note can still have a "running" table; treat it as a snapshot, not truth.
+4. Machine notes (`type: machine` frontmatter) — per-machine facts. The deployments on a machine are the deployment notes whose `host` links to it. A table "Without a project note" lists services that have no project note; treat it as a snapshot, not truth. Notes with `kind: platform` (`Stores`, `GitHub`) or `external` (`Testing`) are hosts that are not your machines.
 5. `_Config.md` — the machines list tells you how to reach each machine (`local` or `ssh=<alias>`).
 
 ## Static vs live — the core rule

@@ -11,7 +11,7 @@ addresses: []
 updated: YYYY-MM-DDTHH:MM
 verified:
 ---
-%% Current facts only. Move old text to archive.md. Delete these hints when you fill the note. %%
+%% Current facts only. Move old text to archive.md. kind: server | laptop | desktop | platform | external. A platform (app stores, GitHub) or a server that is not yours also gets a note of this type, so deployments can link to it. Delete these hints when you fill the note. %%
 
 # MACHINE
 
