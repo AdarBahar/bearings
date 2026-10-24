@@ -1,74 +1,94 @@
 ---
-project: PROJECT-NAME
-repo: github.com/OWNER/REPO
-ownership: mine          # mine | external
-status: active           # active | paused | archived
+type: project
+project: PROJECT_NAME
+summary: What the project does, in one sentence.
+status: active
+ownership: mine
+group:
 stack: []
-local_path: ~/Code/PROJECT-NAME
-environments: []
-  # - {name: dev, host: mac, url: "http://localhost:PORT"}
-  # - {name: dev, host: linux-laptop, url: "http://192.168.x.x:PORT"}
-  # - {name: staging, host: server-1, url: "https://..."}
-  # - {name: prod, host: server-2, url: "https://..."}
-updated: YYYY-MM-DD
+repo: https://github.com/OWNER/REPO
+default_branch: main
+clones:
+  - "mac:~/Code/PROJECT_NAME"
+deploy_scope: none
+deployments: []
+domains: []
+databases: []
+doc_architecture:
+doc_deployment:
+doc_runbook:
+doc_api:
+updated: YYYY-MM-DDTHH:MM
+verified:
 ---
+%% Rules: current facts only. Before you change a fact, move the old text to archive.md. Empty = does not apply. "unknown" = applies, value not known. Never write a secret value. Delete these %% hints when you fill the note. %%
 
-# PROJECT-NAME
+# PROJECT_NAME
 
-> One-line description of what this project does.
+> What the project does, in one sentence. The current focus, in one more sentence.
 
 ## Resume here
 
 <!-- manual:start -->
-*What I was doing last, open threads, next steps. This section is never touched by the generator — keep your own notes here.*
+%% Your notes: last work, open threads, next step. The generator does not change this section. %%
 <!-- manual:end -->
 
 ## Quick start
 
+*Updated YYYY-MM-DD · source: repo*
+
 ```bash
-# run locally (dev)
-# run tests
+# install
+# run      → http://localhost:PORT
+# test
 # build
 ```
 
-## Environments & access
+## Deployments
 
-| Env | Host | URL / Access | Notes |
-|-----|------|--------------|-------|
-| dev | mac | http://localhost:PORT | |
+![[_Deployments.base#Linked to this note]]
 
-**API endpoints:** base URL, docs URL (Swagger/OpenAPI), auth method.
+%% Do not type this table. Make one note for each running instance: PROJECT_NAME@<env>.md (template: deployment). %%
 
-## Deployment
+## Deployment process
 
-How each environment gets deployed (script, compose file, PM2, CI). One subsection per target if they differ.
+*Updated YYYY-MM-DD · source: repo*
+
+%% 3–8 lines: trigger → build → transfer → migrate → restart → health check → rollback. Link doc_deployment for the details. %%
 
 ## Configuration
 
-> ⚠️ Variable **names and purpose only** — never values. This vault syncs to Google Drive.
+*Updated YYYY-MM-DD · source: repo*
 
-| File | Machine | Purpose |
-|------|---------|---------|
-| `.env` | mac | local dev config |
+| File | Where | Purpose |
+|---|---|---|
+| `.env` | clone | dev settings |
 
-**Key variables:** grouped by purpose (DB, LLM providers, external APIs, feature flags).
+%% Variable names grouped by purpose. Then one line: "Secrets kept in: …" (names of vault items or files, not values). %%
 
 ## External dependencies
 
-Services this project talks to: LLM providers, third-party APIs, my other services (link them: [[other-project]]).
+| Dependency | Used for | Variable |
+|---|---|---|
+| | | |
 
 ## Architecture
 
-Short overview of components and data flow. Link repo docs for depth — don't duplicate them here.
+*Updated YYYY-MM-DD · source: repo*
+
+%% 5–15 lines: components and data flow. Link doc_architecture for the details. Do not copy repo documents. %%
+
+## Open items
+
+- [ ] YYYY-MM-DD — item
+
+%% Move done items to archive.md. %%
 
 ## Links
 
-- Repo: https://github.com/OWNER/REPO
-- Changelog: [[PROJECT-NAME/changelog|changelog]]
-- CLAUDE.md: `~/Code/PROJECT-NAME/CLAUDE.md`
-- Key docs: (paths in repo)
-- Full-context dump for AI (useful for external/unfamiliar repos): `npx repomix` in the repo root → single AI-friendly file
+- Changelog: [[PROJECT_NAME/changelog|changelog]]
+- Archive: [[PROJECT_NAME/archive|archive]]
+- CLAUDE.md: `~/Code/PROJECT_NAME/CLAUDE.md`
 
 <!-- manual-extra:start -->
-<!-- Anything else you add below survives regeneration. -->
 <!-- manual-extra:end -->

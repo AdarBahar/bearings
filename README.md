@@ -81,16 +81,23 @@ Bearings/
 ├── _Config.md          ← your settings (edit in Obsidian)
 ├── _Dashboard.md       ← sweep results, costs, approvals
 ├── _Index.md           ← one row for each project
+├── _Deployments.base   ← tables of all deployments (Obsidian Bases)
+├── _templates/         ← the note templates
 ├── project-a/
-│   ├── project-a.md    ← the note: resume here, quick start, environments,
-│   └── changelog.md       deployment, configuration, dependencies, architecture
+│   ├── project-a.md        ← the current state: resume here, quick start,
+│   │                          deploy process, configuration, architecture
+│   ├── project-a@prod.md   ← one note for each running deployment
+│   ├── changelog.md        ← code changes, from Git
+│   └── archive.md          ← old facts, ops events, done items
 └── linux-laptop/
     └── linux-laptop.md ← a machine note
 ```
 
-- **Project note:** what the project does, its parts, how to start it, its environments and URLs, how to deploy it, where its configuration is, and its dependencies. Text that you write in the "Resume here" section stays after each refresh.
+- **Project note:** the current state of the project: what it does, how to start it, how to deploy it, where its configuration is, its dependencies and its architecture. Text that you write in the "Resume here" section stays after each refresh.
+- **Deployment note:** one running instance: host, URLs, paths, user, process, port, database, deploy method, and the date of the last live check. The facts are properties, so the Base can show them as tables for each project, machine or env.
 - **Changelog:** a summary of the Git history. Each refresh adds the new changes.
-- **Machine note:** the services, containers, databases and ports of one machine.
+- **Archive:** the history of the notes. Before Bearings replaces a fact, it copies the old text here with the date and the reason.
+- **Machine note:** the facts of one machine. It shows the deployments on the machine from the Base.
 - **Dashboard:** the result of each sweep. New projects show as checkboxes. Tick one to approve its note.
 - **Group:** you can put related projects one level down under a parent project, for example `my-app/api/api.md`. Bearings finds them there.
 
@@ -143,7 +150,7 @@ skills/bearings-doc/         project scan → note and changelog (local and SSH)
 skills/bearings-ops/         questions, live checks, actions with confirmation
 scripts/bearings_sweep.py    discovery, out-of-date check, approvals, dashboard, cost
 scripts/install-schedule.sh  daily timer: launchd (macOS), systemd user timer (Linux), or cron
-templates/                   _Config.md, _Dashboard.md and the project note template
+templates/                   _Config.md, _Dashboard.md, _Deployments.base and the note templates
 assets/                      architecture diagram (light and dark)
 install.sh                   links the skills into ~/.claude/skills
 ```

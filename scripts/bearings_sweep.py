@@ -280,6 +280,11 @@ def note_updated(vault, name):
     return m.group(1) if m else ""
 
 
+def is_stale(stamp, updated):
+    """stamp is YYYY-MM-DD; updated can also carry a time (YYYY-MM-DDTHH:MM)."""
+    return stamp > updated[:10]
+
+
 def replace_section(text, key, content):
     start, end = MARK[key]
     block = f"{start}\n{content}\n{end}"
@@ -384,7 +389,7 @@ def main():
                 continue
             if updated is None:
                 new.append((name, machine, path, stamp))
-            elif stamp > updated:
+            elif is_stale(stamp, updated):
                 stale.append((name, machine, path, stamp, updated))
             else:
                 ok += 1
