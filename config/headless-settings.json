@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write|Grep|NotebookEdit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"$BEARINGS_HOME\" ]; then python3 \"$BEARINGS_HOME/scripts/secret_guard.py\"; fi",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"$BEARINGS_HOME\" ]; then python3 \"$BEARINGS_HOME/scripts/lint_hook.py\"; fi",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
