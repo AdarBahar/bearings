@@ -418,6 +418,55 @@ class TestRepoGuard(unittest.TestCase):
         self.assertEqual((local_hooks / "pre-commit").read_text(),
                          "#!/bin/sh\nexit 0\n")
 
+    def test_alias_chain_survives_a_noop_run_and_restores_a_retarget(self):
+        # .git/hooks -> hooks-alias -> actual-hooks. The alias existed at
+        # snapshot time, so a no-op run must keep it, and a retargeted
+        # alias must come back.
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        actual = self.repo / "actual-hooks"
+        actual.mkdir()
+        (actual / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+        alias = self.repo / "hooks-alias"
+        alias.symlink_to(actual)
+        hooks = self.repo / ".git" / "hooks"
+        shutil.rmtree(hooks)
+        hooks.symlink_to(alias)
+        snap = repo_guard_snapshot(self.repo)
+        self.assertEqual(repo_guard_restore(self.repo, snap), [])
+        self.assertTrue(alias.is_symlink())
+        self.assertTrue(hooks.is_symlink())
+        src = self.repo / "src"
+        src.mkdir()
+        (src / "app.py").write_text("x = 1\n")
+        alias.unlink()
+        alias.symlink_to(src)
+        (actual / "planted").write_text("payload\n")
+        repo_guard_restore(self.repo, snap)
+        self.assertTrue(alias.is_symlink())
+        self.assertEqual(os.readlink(alias), str(actual))
+        self.assertTrue((src / "app.py").exists())
+        self.assertFalse((actual / "planted").exists())
+
+    def test_relative_link_outside_the_project_is_left_alone(self):
+        # .git/hooks -> ../../external-hooks: the unresolved .. must not
+        # pass containment, and the repair must not touch the outside.
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        outside = Path(tempfile.mkdtemp())
+        try:
+            (outside / "keep.txt").write_text("keep\n")
+            hooks = self.repo / ".git" / "hooks"
+            shutil.rmtree(hooks)
+            rel_text = os.path.relpath(str(outside), str(self.repo / ".git"))
+            os.symlink(rel_text, str(hooks))
+            snap = repo_guard_snapshot(self.repo)
+            self.assertFalse(any(str(outside) in k for k in snap))
+            self.assertEqual(repo_guard_restore(self.repo, snap), [])
+            self.assertTrue(hooks.is_symlink())
+            self.assertEqual(os.readlink(hooks), rel_text)
+            self.assertTrue((outside / "keep.txt").exists())
+        finally:
+            shutil.rmtree(outside)
+
     def test_preexisting_symlinks_survive_a_noop_run(self):
         # A repo may keep .git/config or .git/hooks as symlinks on purpose.
         # The guard must record and keep that link state.

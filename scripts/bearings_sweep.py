@@ -439,12 +439,20 @@ def _repo_guard_walk(base):
             yield p, "link" if p.is_symlink() else "file"
 
 
+def _norm_target(link_path, text):
+    """The link's target as an absolute path with . and .. collapsed
+    lexically — never resolved through other symlinks."""
+    raw = text if os.path.isabs(text) else str(link_path.parent / text)
+    return Path(os.path.normpath(raw))
+
+
 def _snapshot_entry(p, kind, snap, root):
-    """Record one guarded entry. A symlink's resolved target is guarded
-    too — a run could change the target instead of the link — so a file
-    target is recorded as a file, and a folder target is walked. Only a
-    target inside the project is followed: following one outside would
-    read, and later prune, folders the guard does not own."""
+    """Record one guarded entry. A symlink's target is guarded too — a
+    run could change the target instead of the link. A link in the chain
+    (an alias) becomes its own entry, so a no-op run keeps it and a
+    retargeted one is restored. Only targets inside the project are
+    followed: following one outside would read, and later prune, folders
+    the guard does not own."""
     key = str(p)
     if key in snap:
         return
@@ -453,11 +461,15 @@ def _snapshot_entry(p, kind, snap, root):
         # removed is a disabled hook, even with its contents intact.
         snap[key] = ("file", p.read_bytes(), p.stat().st_mode & 0o7777)
         return
-    snap[key] = (kind, os.readlink(p))
-    target = p.resolve()
-    if not _inside(target, root):
+    text = os.readlink(p)
+    snap[key] = (kind, text)
+    target = _norm_target(p, text)
+    if target == root or not _inside(target, root):
         return
-    if target.is_file():
+    if target.is_symlink():
+        nkind = "dirlink" if target.resolve().is_dir() else "link"
+        _snapshot_entry(target, nkind, snap, root)
+    elif target.is_file():
         _snapshot_entry(target, "file", snap, root)
     elif target.is_dir():
         for q, k in _repo_guard_walk(target):
@@ -472,11 +484,18 @@ def _inside(target, root):
         return False
 
 
+def _lexical_root(path):
+    """The project root as the guard's paths spell it: absolute and
+    normalized, but never resolved — the snapshot keys and the link
+    targets are lexical, and containment must compare like with like."""
+    return Path(os.path.normpath(os.path.abspath(str(path))))
+
+
 def repo_guard_snapshot(path):
     base = Path(path) / ".git"
     if base.is_symlink() or not base.is_dir():
         return {}
-    root = Path(path).resolve()
+    root = _lexical_root(path)
     snap = {}
     for p, kind in _repo_guard_walk(base):
         _snapshot_entry(p, kind, snap, root)
@@ -509,19 +528,26 @@ def _restore_entry(p, entry):
         p.symlink_to(entry[1])
 
 
-def _ensure_real_chain(p, root, changed):
+def _ensure_real_chain(p, snap, root, changed):
     """Every folder above a snapshot entry was a real folder at snapshot
-    time — symlinked folders were recorded as dirlink entries and never
+    time — a symlinked folder became its own snapshot entry and was never
     descended. So a symlink (or a file) in the chain now is a redirect a
     run planted, and it is replaced with a real folder before any prune
-    or write resolves through it."""
+    or write resolves through it. A component that is itself a guarded
+    link stops the repair: its own entry restores it, and the chain
+    continues from its recorded target. Paths with . or .. are never
+    repaired — lexical containment cannot be trusted for them."""
     try:
         rel = Path(p).relative_to(root)
     except ValueError:
         return
+    if ".." in rel.parts or "." in rel.parts:
+        return
     cur = root
     for part in rel.parts[:-1]:
         cur = cur / part
+        if str(cur) in snap:
+            return
         if cur.is_symlink() or cur.is_file():
             _remove_entry(cur)
             cur.mkdir()
@@ -539,23 +565,28 @@ def repo_guard_restore(path, snap):
         base.unlink()
         base.mkdir()
         changed.append(f"{base} (symlink replaced)")
-    root = Path(path).resolve()
+    root = _lexical_root(path)
     # Repair the parent chains first: afterwards no path in the snapshot,
     # and no recorded link target, resolves through a mutable component.
     for fp, entry in snap.items():
-        _ensure_real_chain(Path(fp), root, changed)
+        _ensure_real_chain(Path(fp), snap, root, changed)
         if entry[0] == "dirlink":
-            _ensure_real_chain(Path(fp).parent / entry[1] / "x", root, changed)
+            target = _norm_target(Path(fp), entry[1])
+            if str(target) not in snap and _inside(target, root):
+                _ensure_real_chain(target / "x", snap, root, changed)
     current = {str(p) for p, _ in _repo_guard_walk(base)}
     for fp, entry in snap.items():
         # A linked folder is guarded through its target: additions there
         # must go too. Only the target recorded in the snapshot is walked
         # — never the link's current target, which a run may have pointed
         # at a folder the guard does not own — and only inside the
-        # project.
+        # project. A target that is itself a guarded link is covered by
+        # its own entry.
         if entry[0] == "dirlink":
-            target = (Path(fp).parent / entry[1]).resolve()
-            if target.is_dir() and _inside(target, root):
+            target = _norm_target(Path(fp), entry[1])
+            if str(target) in snap or not _inside(target, root):
+                continue
+            if target.is_dir() and not target.is_symlink():
                 current.update(str(q) for q, _ in _repo_guard_walk(target))
     # Remove additions first: a swapped folder can hold planted entries,
     # and they must go before the folder itself is put back.
