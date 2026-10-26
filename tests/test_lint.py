@@ -202,24 +202,33 @@ class TestLintHook(LintVaultCase):
 
 
 class TestDenyRules(unittest.TestCase):
-    def test_env_example_stays_readable(self):
+    def rules(self):
         from bearings_sweep import deny_tools
-        rules = deny_tools(Path("/repo"))
+        return deny_tools(Path("/repo"), Path("/vault"))
+
+    def test_env_example_stays_readable(self):
+        rules = self.rules()
         self.assertNotIn(".env.example", rules)
         self.assertIn("Read(**/.env)", rules)
         self.assertIn("Edit(**/.env)", rules)
 
     def test_run_cannot_change_its_own_guardrails(self):
-        from bearings_sweep import BEARINGS_DIR, deny_tools
-        rules = deny_tools(Path("/repo"))
+        from bearings_sweep import BEARINGS_DIR
+        rules = self.rules()
         self.assertIn("Edit(//repo/**)", rules)
         self.assertIn("Write(//repo/**)", rules)
         self.assertIn(f"Edit(//{str(BEARINGS_DIR).lstrip('/')}/**)", rules)
 
-    def test_git_allowlist_has_no_file_reading_forms(self):
-        from bearings_sweep import GIT_ALLOW
+    def test_run_cannot_escalate_its_own_permissions(self):
+        rules = self.rules()
+        for f in ["_Config.md", "_Dashboard.md", "_templates/**"]:
+            self.assertIn(f"Edit(//vault/{f})", rules)
+            self.assertIn(f"Write(//vault/{f})", rules)
+
+    def test_git_subcommands_have_no_file_reading_forms(self):
+        from git_ro import SUBCOMMANDS
         for sub in ["show", "grep", "diff", "cat-file", "-c", "-C", "config"]:
-            self.assertNotIn(sub, GIT_ALLOW)
+            self.assertNotIn(sub, SUBCOMMANDS)
 
 
 if __name__ == "__main__":

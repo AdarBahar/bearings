@@ -323,25 +323,18 @@ STATIC_DENY = [
     "Read(**/.ssh/**)", "Read(**/.aws/**)", "Read(**/secrets/**)",
 ]
 
-# Only these git subcommands are allowed. A bare Bash(git:*) also permits
-# forms that read arbitrary files (git diff --no-index, git grep) or run
-# commands (git -c alias.…).
-GIT_ALLOW = ["log", "shortlog", "remote", "status", "tag", "branch",
-             "rev-parse", "describe", "ls-files"]
-
-
-def _abs_rule(tool, base):
-    """A permission rule for an absolute path: Edit(//Users/…/**)."""
-    return f"{tool}(//{str(base).lstrip('/')}/**)"
-
-
-def deny_tools(home):
-    """The static denies, plus: the run must not change its own guardrails.
-    The repo holds the linter, the hook and the settings; ~/.bearings holds
-    the vault pointer that the hook trusts."""
-    guard = []
-    for base in (home, BEARINGS_DIR):
-        guard += [_abs_rule("Edit", base), _abs_rule("Write", base)]
+def deny_tools(home, vault):
+    """The static denies, plus: the run must not change its own guardrails or
+    escalate its own permissions. The repo holds the linter, the hook, the
+    git wrapper and the settings; ~/.bearings holds the vault pointer that
+    the hook trusts; _Config.md holds refresh_mode and create_new;
+    _Dashboard.md holds the approval checkboxes; _templates/ defines the
+    note structure that the linter compares against."""
+    guard_paths = [f"{home}/**", f"{BEARINGS_DIR}/**",
+                   f"{vault}/_Config.md", f"{vault}/_Dashboard.md",
+                   f"{vault}/_templates/**"]
+    guard = [f"{tool}(//{str(p).lstrip('/')})"
+             for p in guard_paths for tool in ("Edit", "Write")]
     return ",".join(STATIC_DENY + guard)
 
 
@@ -352,14 +345,16 @@ def bearings_home(env):
 def run_claude(env, vault, machine, path):
     claude = env.get("BEARINGS_CLAUDE_BIN", "claude")
     target = path if machine["ssh"] is None else f"ssh={machine['ssh']}:{path}"
-    tools = ",".join(["Read", "Glob", "Grep", "Write", "Edit", "Bash(ls:*)"]
-                     + [f"Bash(git {sub}:*)" for sub in GIT_ALLOW])
+    home = bearings_home(env)
+    # No plain git: a prefix rule cannot see a flag like --output=<file>.
+    # The wrapper vets the subcommand and every argument.
+    tools = ",".join(["Read", "Glob", "Grep", "Write", "Edit", "Bash(ls:*)",
+                      f"Bash(python3 {home}/scripts/git_ro.py:*)"])
     if machine["ssh"] and env.get("BEARINGS_ALLOW_SSH") == "1":
         tools += ",Bash(ssh:*)"
-    home = bearings_home(env)
     cmd = [claude, "-p", f"/bearings-doc {target}", "--output-format", "json",
            "--add-dir", str(vault), "--permission-mode", "acceptEdits",
-           "--allowedTools", tools, "--disallowedTools", deny_tools(home)]
+           "--allowedTools", tools, "--disallowedTools", deny_tools(home, vault)]
     settings = home / "config" / "headless-settings.json"
     if settings.exists():
         cmd += ["--settings", str(settings)]
