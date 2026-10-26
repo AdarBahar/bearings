@@ -131,6 +131,13 @@ class TestLintFile(LintVaultCase):
         self.write("app/app.md", GOOD_PROJECT + "\nSee [[mac#Access|the mac]].\n")
         self.assertEqual(self.lint("app/app.md"), [])
 
+    def test_attachment_embed_resolves(self):
+        (self.vault / "app" / "diagram.png").write_bytes(b"\x89PNG")
+        self.write("app/app.md", GOOD_PROJECT + "\n![[diagram.png]]\n")
+        self.assertEqual(self.lint("app/app.md"), [])
+        self.write("app/app.md", GOOD_PROJECT + "\n![[missing.png]]\n")
+        self.assertIn("link does not resolve: [[missing.png]]", self.lint("app/app.md"))
+
     def test_placeholder_outside_manual_section(self):
         self.write("app/app.md", GOOD_PROJECT + "\nClone: OWNER/REPO\n")
         self.assertIn("template placeholder left in the note: OWNER/REPO",
@@ -235,6 +242,16 @@ class TestDenyRules(unittest.TestCase):
         self.assertIn("Edit(**/.git/**)", rules)
         self.assertIn("Write(**/.git/**)", rules)
 
+    def test_bare_git_is_denied(self):
+        # --allowedTools does not remove the auto-allow for read-only
+        # commands, so bare git needs an explicit deny.
+        self.assertIn("Bash(git:*)", self.rules())
+
+    def test_env_variants_are_denied(self):
+        rules = self.rules()
+        for s in ["test*", "prod*", "backup*", "old*", "secret*"]:
+            self.assertIn(f"Read(**/.env.{s})", rules)
+
 
 class TestGuardFiles(unittest.TestCase):
     def setUp(self):
@@ -317,6 +334,75 @@ class TestRepoGuard(unittest.TestCase):
         plain.mkdir()
         self.assertEqual(repo_guard_snapshot(plain), {})
         self.assertEqual(repo_guard_restore(plain, {}), [])
+
+    def test_preexisting_symlinks_survive_a_noop_run(self):
+        # A repo may keep .git/config or .git/hooks as symlinks on purpose.
+        # The guard must record and keep that link state.
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        config = self.repo / ".git" / "config"
+        real = self.repo / "real-config"
+        real.write_bytes(config.read_bytes())
+        config.unlink()
+        config.symlink_to(real)
+        hooks = self.repo / ".git" / "hooks"
+        hooks_target = self.repo / "real-hooks"
+        shutil.move(str(hooks), str(hooks_target))
+        hooks.symlink_to(hooks_target)
+        snap = repo_guard_snapshot(self.repo)
+        self.assertEqual(repo_guard_restore(self.repo, snap), [])
+        self.assertTrue(config.is_symlink())
+        self.assertTrue(hooks.is_symlink())
+        self.assertTrue(real.exists())
+
+
+class TestSecretGuard(unittest.TestCase):
+    def run_guard(self, file_path):
+        payload = json.dumps({"tool_name": "Read",
+                              "tool_input": {"file_path": file_path}})
+        return subprocess.run([sys.executable,
+                               str(ROOT / "scripts" / "secret_guard.py")],
+                              input=payload, capture_output=True, text=True)
+
+    def test_env_family_is_blocked(self):
+        for name in [".env", ".env.test", ".env.prod", ".env.backup",
+                     ".env.anything-at-all"]:
+            r = self.run_guard(f"/some/project/{name}")
+            self.assertEqual(r.returncode, 2, name)
+            self.assertIn("secrets", r.stderr)
+
+    def test_templates_and_other_files_pass(self):
+        for name in [".env.example", ".env.sample", ".env.dist",
+                     ".env.template", "app.py", "environment.md"]:
+            r = self.run_guard(f"/some/project/{name}")
+            self.assertEqual(r.returncode, 0, name)
+
+    def test_garbage_stdin_exits_0(self):
+        r = subprocess.run([sys.executable,
+                            str(ROOT / "scripts" / "secret_guard.py")],
+                           input="not json", capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class TestTimeoutRestore(unittest.TestCase):
+    def test_timeout_still_restores_and_reports(self):
+        from unittest import mock
+        import bearings_sweep
+        repo = Path(tempfile.mkdtemp())
+        try:
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            machine = {"name": "mac", "ssh": None}
+            warnings = []
+            exc = subprocess.TimeoutExpired(cmd="claude", timeout=900)
+            with mock.patch.object(bearings_sweep, "run", side_effect=exc), \
+                 mock.patch.object(bearings_sweep, "repo_guard_restore",
+                                   wraps=bearings_sweep.repo_guard_restore) as rg:
+                result = bearings_sweep.run_claude({}, repo, machine,
+                                                   str(repo), warnings)
+            self.assertEqual(result, (False, 0, 0, 0))
+            self.assertTrue(any("timed out" in w for w in warnings))
+            rg.assert_called_once()
+        finally:
+            shutil.rmtree(repo)
 
 
 if __name__ == "__main__":

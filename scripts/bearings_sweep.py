@@ -12,6 +12,7 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import date, datetime
@@ -313,18 +314,34 @@ def read_pending_approvals(dash_text):
 # .env.example stays readable — the skill uses it for the variable names.
 # The rules are defense in depth, not a sandbox: a tool that is not listed
 # here can still find another path to a file.
-STATIC_DENY = [
-    "Read(**/.env)", "Edit(**/.env)", "Edit(**/.env.*)",
-    "Read(**/.env.local)", "Read(**/.env.*.local)",
-    "Read(**/.env.production)", "Read(**/.env.development)", "Read(**/.env.staging)",
-    "Read(**/.envrc)",
-    "Read(**/*.pem)", "Read(**/*.key)", "Read(**/*.p12)", "Read(**/*.pfx)",
-    "Read(**/id_rsa*)", "Read(**/id_ed25519*)", "Read(**/id_ecdsa*)",
-    "Read(**/.ssh/**)", "Read(**/.aws/**)", "Read(**/secrets/**)",
-    # A write to .git/config or .git/hooks turns the next git call into
-    # command execution.
-    "Edit(**/.git/**)", "Write(**/.git/**)",
+# .env suffix families that carry secrets. The template names
+# (.env.example, .env.sample, .env.dist, .env.template) stay readable;
+# the secret_guard.py hook enforces the full "everything except the
+# templates" rule, which a deny glob cannot express.
+ENV_SECRET_SUFFIXES = [
+    "local", "*.local", "test*", "prod*", "dev*", "stag*", "preprod*",
+    "preview*", "qa*", "uat*", "ci*", "live*", "private*", "secret*",
+    "backup*", "bak*", "old*", "orig*", "save*", "docker*", "compose*",
+    "override*", "enc*",
 ]
+
+STATIC_DENY = (
+    ["Read(**/.env)", "Edit(**/.env)", "Edit(**/.env.*)", "Read(**/.envrc)"]
+    + [f"Read(**/.env.{s})" for s in ENV_SECRET_SUFFIXES]
+    + [
+        "Read(**/*.pem)", "Read(**/*.key)", "Read(**/*.p12)", "Read(**/*.pfx)",
+        "Read(**/id_rsa*)", "Read(**/id_ed25519*)", "Read(**/id_ecdsa*)",
+        "Read(**/.ssh/**)", "Read(**/.aws/**)", "Read(**/secrets/**)",
+        # A write to .git/config or .git/hooks turns the next git call into
+        # command execution.
+        "Edit(**/.git/**)", "Write(**/.git/**)",
+        # Bare git is denied even though it is not in --allowedTools:
+        # Claude Code auto-allows read-only commands, and bare git obeys
+        # the repo config (fsmonitor, pager). This forces every git call
+        # through git_ro.py.
+        "Bash(git:*)",
+    ]
+)
 
 def deny_tools(home, vault):
     """The static denies, plus: the run must not change its own guardrails or
@@ -392,37 +409,69 @@ def guard_restore(vault, snap):
 # The whole .git tree is guarded, except the content stores that change
 # legitimately and are not configuration. This also covers the config,
 # hooks and info files of submodules (.git/modules/**) and linked
-# worktrees (.git/worktrees/**).
+# worktrees (.git/worktrees/**). Symlinks are part of the guarded state:
+# the snapshot records each link and its target, and the restore puts
+# them back as links, so a repo that uses them keeps them.
 REPO_GUARD_SKIP_DIRS = {"objects", "refs", "logs", "lfs"}
 REPO_GUARD_SKIP_FILES = {"index", "packed-refs", "FETCH_HEAD", "ORIG_HEAD",
                          "COMMIT_EDITMSG", "shallow"}
 
 
-def _repo_guard_walk(base, on_symlink_dir=None):
-    """Yield the guarded files under .git. A symlinked folder is handed to
-    on_symlink_dir (restore replaces it); os.walk never follows it."""
+def _repo_guard_walk(base):
+    """Yield (path, kind): regular files ('file'), file symlinks ('link')
+    and symlinked folders ('dirlink', never descended)."""
     for root, dirs, files in os.walk(base):
-        for d in list(dirs):
+        keep = []
+        for d in dirs:
             dp = Path(root) / d
-            if dp.is_symlink() and on_symlink_dir:
-                on_symlink_dir(dp)
-        dirs[:] = [d for d in dirs if d not in REPO_GUARD_SKIP_DIRS]
+            if dp.is_symlink():
+                yield dp, "dirlink"
+            elif d not in REPO_GUARD_SKIP_DIRS:
+                keep.append(d)
+        dirs[:] = keep
         for f in files:
-            if f not in REPO_GUARD_SKIP_FILES:
-                yield Path(root) / f
+            if f in REPO_GUARD_SKIP_FILES:
+                continue
+            p = Path(root) / f
+            yield p, "link" if p.is_symlink() else "file"
 
 
 def repo_guard_snapshot(path):
     base = Path(path) / ".git"
     if base.is_symlink() or not base.is_dir():
         return {}
-    return {str(p): p.read_bytes()
-            for p in _repo_guard_walk(base) if p.is_file() and not p.is_symlink()}
+    return {str(p): ("file", p.read_bytes()) if kind == "file"
+            else (kind, os.readlink(p))
+            for p, kind in _repo_guard_walk(base)}
+
+
+def _entry_matches(p, entry):
+    kind, data = entry
+    if kind == "file":
+        return p.is_file() and not p.is_symlink() and p.read_bytes() == data
+    return p.is_symlink() and os.readlink(p) == data
+
+
+def _remove_entry(p):
+    if p.is_symlink() or p.is_file():
+        p.unlink()
+    elif p.is_dir():
+        shutil.rmtree(p)
+
+
+def _restore_entry(p, entry):
+    kind, data = entry
+    _remove_entry(p)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    if kind == "file":
+        p.write_bytes(data)
+    else:
+        p.symlink_to(data)
 
 
 def repo_guard_restore(path, snap):
-    """Put the guarded .git files back as they were, replace symlink swaps,
-    and remove files a run added. Returns the changed paths."""
+    """Put the guarded .git entries back as they were — contents and link
+    state — and remove entries a run added. Returns the changed paths."""
     if not snap:
         return []
     changed = []
@@ -431,21 +480,17 @@ def repo_guard_restore(path, snap):
         base.unlink()
         base.mkdir()
         changed.append(f"{base} (symlink replaced)")
-
-    def replace_symlink_dir(dp):
-        dp.unlink()
-        dp.mkdir()
-        changed.append(f"{dp} (symlink replaced)")
-
-    current = {str(p) for p in _repo_guard_walk(base, replace_symlink_dir)}
-    for fp, data in snap.items():
+    current = [str(p) for p, _ in _repo_guard_walk(base)]
+    # Remove additions first: a swapped folder can hold planted entries,
+    # and they must go before the folder itself is put back.
+    for fp in sorted(set(current) - set(snap)):
+        _remove_entry(Path(fp))
+        changed.append(f"{fp} (new entry removed)")
+    for fp, entry in snap.items():
         p = Path(fp)
-        if p.is_symlink() or not p.is_file() or p.read_bytes() != data:
-            _write_guarded(p, data)
+        if not _entry_matches(p, entry):
+            _restore_entry(p, entry)
             changed.append(fp)
-    for fp in sorted(current - set(snap)):
-        Path(fp).unlink()
-        changed.append(f"{fp} (new file removed)")
     return changed
 
 
@@ -472,12 +517,20 @@ def run_claude(env, vault, machine, path, warnings):
     run_env = {**os.environ, "BEARINGS_HOME": str(home),
                "BEARINGS_VAULT_DIR": str(vault)}
     repo_guard = repo_guard_snapshot(path) if machine["ssh"] is None else {}
-    r = run(cmd, cwd=path if machine["ssh"] is None else str(Path.home()),
-            timeout=900, env=run_env)
-    restored = repo_guard_restore(path, repo_guard)
-    if restored:
-        warnings.append("a run changed .git guard files; restored: "
-                        + ", ".join(restored))
+    r = None
+    try:
+        r = run(cmd, cwd=path if machine["ssh"] is None else str(Path.home()),
+                timeout=900, env=run_env)
+    except subprocess.TimeoutExpired:
+        warnings.append(f"refresh timed out after 900s: {path}")
+    finally:
+        # The guard must run even when the claude call times out.
+        restored = repo_guard_restore(path, repo_guard)
+        if restored:
+            warnings.append("a run changed .git guard files; restored: "
+                            + ", ".join(restored))
+    if r is None:
+        return False, 0, 0, 0
     cost = tokens_in = tokens_out = 0
     try:
         j = json.loads(r.stdout)
@@ -561,27 +614,28 @@ def main():
     stale = [s for s in stale if not (s[0] in seen or seen.add(s[0]))]
 
     guard = guard_snapshot(vault)
-
-    for name, machine, path, stamp, updated in stale if do_refresh else []:
-        good, c, ti, to = run_claude(env, vault, machine, path, warnings)
-        cost += c; t_in += ti; t_out += to
-        actions.append(f"refreshed {name}" if good else f"refresh FAILED {name}")
-
     pending_out = []
-    for name, machine, path, stamp in new:
-        approve = cfg["create_new"] == "auto" or (name, machine["name"]) in approved
-        if approve and not report_only:
+    try:
+        for name, machine, path, stamp, updated in stale if do_refresh else []:
             good, c, ti, to = run_claude(env, vault, machine, path, warnings)
             cost += c; t_in += ti; t_out += to
-            actions.append(f"created {name}" if good else f"create FAILED {name}")
-        elif cfg["create_new"] == "ask":
-            pending_out.append(f"- [ ] {name} @{machine['name']} (changed {stamp})")
+            actions.append(f"refreshed {name}" if good else f"refresh FAILED {name}")
 
-    if actions:
-        restored = guard_restore(vault, guard)
-        if restored:
-            warnings.append("a run changed guarded files; restored: "
-                            + ", ".join(restored))
+        for name, machine, path, stamp in new:
+            approve = cfg["create_new"] == "auto" or (name, machine["name"]) in approved
+            if approve and not report_only:
+                good, c, ti, to = run_claude(env, vault, machine, path, warnings)
+                cost += c; t_in += ti; t_out += to
+                actions.append(f"created {name}" if good else f"create FAILED {name}")
+            elif cfg["create_new"] == "ask":
+                pending_out.append(f"- [ ] {name} @{machine['name']} (changed {stamp})")
+    finally:
+        # The vault guard must run even when a refresh raises.
+        if actions:
+            restored = guard_restore(vault, guard)
+            if restored:
+                warnings.append("a run changed guarded files; restored: "
+                                + ", ".join(restored))
 
     # ---- lint (deterministic, zero tokens) ----
     lint_problems = []

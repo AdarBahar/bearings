@@ -104,6 +104,14 @@ def find_obsidian_root(vault):
     return vault
 
 
+# Notes link without the extension; attachments and Base files link with
+# it. Both kinds are valid [[link]] targets in Obsidian.
+NOTE_SUFFIXES = {".md", ".base", ".canvas"}
+ATTACHMENT_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
+                       ".avif", ".bmp", ".pdf", ".mp3", ".wav", ".m4a",
+                       ".ogg", ".flac", ".webm", ".mp4", ".mov", ".mkv"}
+
+
 def collect_names(vault):
     """Everything a [[link]] can resolve to, across the whole Obsidian vault:
     a set of exact names (stem, file name, root-relative path) and a list of
@@ -111,15 +119,18 @@ def collect_names(vault):
     root = find_obsidian_root(vault)
     exact, paths = set(), []
     for p in root.rglob("*"):
-        if p.suffix not in (".md", ".base") or not p.is_file():
+        suffix = p.suffix.lower()
+        if suffix not in NOTE_SUFFIXES | ATTACHMENT_SUFFIXES or not p.is_file():
             continue
         rel = p.relative_to(root)
         if any(part.startswith(".") for part in rel.parts) or "_templates" in rel.parts:
             continue
-        # Links name the stem or a path. Links to a .base file keep the
-        # extension, so add the full names too.
-        exact.update({p.stem, p.name, str(rel), str(rel.with_suffix(""))})
-        paths.extend([str(rel), str(rel.with_suffix(""))])
+        exact.update({p.name, str(rel)})
+        paths.append(str(rel))
+        # Only a note resolves without its extension.
+        if suffix in NOTE_SUFFIXES:
+            exact.update({p.stem, str(rel.with_suffix(""))})
+            paths.append(str(rel.with_suffix("")))
     return exact, paths
 
 
