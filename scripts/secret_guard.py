@@ -9,16 +9,25 @@ link that points at a .env file are blocked too. Exit code 2 blocks the
 call, and Claude gets the reason on stderr.
 """
 
-import fnmatch
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 SAFE = {".env.example", ".env.sample", ".env.dist", ".env.template"}
 
-# Names a search glob must not be able to reach.
-PROBE_NAMES = (".env", ".env.x", ".env.local", ".env.prod")
+# A plain file name without a leading dot: it can match only itself.
+LITERAL_GLOB = re.compile(r"[a-z0-9][a-z0-9._-]*")
+# *.ext, with an optional **/ prefix: it matches names by extension only.
+EXT_GLOB = re.compile(r"(\*\*/)?\*\.[a-z0-9]+")
+
+# ripgrep type filters that cannot select a .env file. An unknown type
+# fails closed.
+SAFE_TYPES = {"py", "js", "ts", "jsx", "tsx", "md", "markdown", "json",
+              "yaml", "toml", "html", "css", "sh", "go", "rust", "java",
+              "c", "cpp", "h", "rb", "ruby", "php", "swift", "kotlin",
+              "sql", "xml", "docker", "make", "cmake", "txt"}
 
 
 def _name_blocked(name):
@@ -32,13 +41,17 @@ def is_blocked(file_path):
     return any(_name_blocked(n) for n in names)
 
 
-def glob_may_match_env(glob):
-    """True when the glob can reach a non-template .env name. A bare *,
-    .*, or .env* can; *.py cannot; an exact template name cannot."""
-    base = str(glob).replace("\\", "/").split("/")[-1].lower()
-    if base in SAFE:
-        return False
-    return any(fnmatch.fnmatch(name, base) for name in PROBE_NAMES)
+def glob_allowed(glob):
+    """Only a glob whose meaning needs no interpretation passes: a template
+    name, a plain file name without a leading dot, or *.ext with an
+    optional **/ prefix. Everything else fails closed — this guard does
+    not re-implement ripgrep's glob parser, so it never disagrees with
+    it."""
+    text = str(glob).strip().lower()
+    if text in SAFE:
+        return True
+    return (LITERAL_GLOB.fullmatch(text) is not None
+            or EXT_GLOB.fullmatch(text) is not None)
 
 
 def main():
@@ -53,18 +66,25 @@ def main():
             print(f"bearings guard: {Path(str(value)).name} can hold secrets "
                   "— read .env.example or the code instead", file=sys.stderr)
             return 2
-    # A glob that can reach the .env family is a read of it.
+    # A glob that could reach the .env family is a read of it. Only
+    # unambiguous glob forms pass.
     glob = tool_input.get("glob")
-    if glob and glob_may_match_env(glob):
-        print(f"bearings guard: the glob {glob!r} can reach .env files — "
-              "narrow it (for example *.py)", file=sys.stderr)
+    if glob and not glob_allowed(glob):
+        print(f"bearings guard: the glob {glob!r} is not an allowed form — "
+              "use *.py-style, **/*.py, or a plain file name", file=sys.stderr)
         return 2
     # A folder-scoped Grep searches every file in the tree, the .env
-    # family among them, so it needs a filter that excludes that family.
+    # family among them, so it needs a filter that excludes that family:
+    # a safe glob, or a type from the known-safe list.
     if data.get("tool_name") == "Grep":
+        rtype = tool_input.get("type")
+        if rtype and str(rtype).lower() not in SAFE_TYPES:
+            print(f"bearings guard: the type {rtype!r} is not on the safe "
+                  "list — use a glob such as *.py", file=sys.stderr)
+            return 2
         path = tool_input.get("path")
         dir_scope = not path or Path(str(path)).is_dir()
-        if dir_scope and not tool_input.get("type") and not glob:
+        if dir_scope and not rtype and not glob:
             print("bearings guard: a folder Grep needs a glob or type that "
                   "excludes .env files (for example glob *.py)", file=sys.stderr)
             return 2

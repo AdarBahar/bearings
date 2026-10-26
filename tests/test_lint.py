@@ -402,9 +402,19 @@ class TestRepoGuard(unittest.TestCase):
 
 
 class TestSecretGuard(unittest.TestCase):
-    def run_guard(self, file_path, key="file_path", tool="Read"):
-        payload = json.dumps({"tool_name": tool,
-                              "tool_input": {key: file_path}})
+    def setUp(self):
+        # A search scope with one safe file and one secret-carrying file
+        # whose suffix no static deny list would know.
+        self.scope = Path(tempfile.mkdtemp())
+        (self.scope / "app.py").write_text("x = 1\n")
+        (self.scope / ".env.customer").write_text("SECRET=x\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.scope)
+
+    def run_guard(self, tool_input, tool="Read"):
+        payload = json.dumps({"tool_name": tool, "cwd": str(self.scope),
+                              "tool_input": tool_input})
         return subprocess.run([sys.executable,
                                str(ROOT / "scripts" / "secret_guard.py")],
                               input=payload, capture_output=True, text=True)
@@ -412,52 +422,45 @@ class TestSecretGuard(unittest.TestCase):
     def test_env_family_is_blocked(self):
         for name in [".env", ".env.test", ".env.prod", ".env.backup",
                      ".ENV.PROD", ".env.anything-at-all"]:
-            r = self.run_guard(f"/some/project/{name}")
+            r = self.run_guard({"file_path": f"/some/project/{name}"})
             self.assertEqual(r.returncode, 2, name)
             self.assertIn("secrets", r.stderr)
 
     def test_symlink_to_env_is_blocked(self):
-        tmp = Path(tempfile.mkdtemp())
-        try:
-            env = tmp / ".env"
-            env.write_text("SECRET=x\n")
-            link = tmp / "settings.txt"
-            link.symlink_to(env)
-            r = self.run_guard(str(link))
-            self.assertEqual(r.returncode, 2, r.stderr)
-        finally:
-            shutil.rmtree(tmp)
-
-    def test_grep_path_and_glob_are_blocked(self):
-        r = self.run_guard("/some/project/.env.prod", key="path", tool="Grep")
+        env = self.scope / ".env"
+        env.write_text("SECRET=x\n")
+        link = self.scope / "settings.txt"
+        link.symlink_to(env)
+        r = self.run_guard({"file_path": str(link)})
         self.assertEqual(r.returncode, 2, r.stderr)
-        for glob in [".env*", "*", ".*"]:
-            r = self.run_guard(glob, key="glob", tool="Grep")
+
+    def test_only_unambiguous_globs_pass(self):
+        r = self.run_guard({"path": str(self.scope / ".env.prod")}, tool="Grep")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        # Everything outside the allowed forms fails closed, so a glob
+        # like "*customer" (which reaches .env.customer) never runs.
+        for glob in [".env*", "*", ".*", "*customer", "{*.py,.env*}",
+                     "!.env*", "src/", "[a]pp.py", "a\\b", "?x", "*.p?"]:
+            r = self.run_guard({"pattern": "x", "glob": glob}, tool="Grep")
             self.assertEqual(r.returncode, 2, (glob, r.stderr))
-        r = self.run_guard("*.py", key="glob", tool="Grep")
-        self.assertEqual(r.returncode, 0, r.stderr)
+        for glob in ["*.py", "**/*.md", "package.json", ".env.example"]:
+            r = self.run_guard({"pattern": "x", "glob": glob}, tool="Grep")
+            self.assertEqual(r.returncode, 0, (glob, r.stderr))
 
     def test_folder_grep_needs_a_filter(self):
-        # Without a glob or type, a folder Grep reaches every file,
-        # including any .env suffix outside the static deny list.
-        payload = json.dumps({"tool_name": "Grep",
-                              "tool_input": {"pattern": "secret"}})
-        r = subprocess.run([sys.executable,
-                            str(ROOT / "scripts" / "secret_guard.py")],
-                           input=payload, capture_output=True, text=True)
+        r = self.run_guard({"pattern": "secret"}, tool="Grep")
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("glob or type", r.stderr)
-        payload = json.dumps({"tool_name": "Grep",
-                              "tool_input": {"pattern": "secret", "type": "py"}})
-        r = subprocess.run([sys.executable,
-                            str(ROOT / "scripts" / "secret_guard.py")],
-                           input=payload, capture_output=True, text=True)
+        r = self.run_guard({"pattern": "secret", "type": "py"}, tool="Grep")
         self.assertEqual(r.returncode, 0, r.stderr)
+        # An unknown type fails closed.
+        r = self.run_guard({"pattern": "secret", "type": "weird"}, tool="Grep")
+        self.assertEqual(r.returncode, 2, r.stderr)
 
     def test_templates_and_other_files_pass(self):
         for name in [".env.example", ".env.sample", ".env.dist",
                      ".env.template", "app.py", "environment.md"]:
-            r = self.run_guard(f"/some/project/{name}")
+            r = self.run_guard({"file_path": f"/some/project/{name}"})
             self.assertEqual(r.returncode, 0, name)
 
     def test_garbage_stdin_exits_0(self):
