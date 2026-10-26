@@ -203,10 +203,23 @@ class TestLintHook(LintVaultCase):
 
 class TestDenyRules(unittest.TestCase):
     def test_env_example_stays_readable(self):
-        from bearings_sweep import DENY_TOOLS
-        self.assertNotIn(".env.example", DENY_TOOLS)
-        self.assertIn("Read(**/.env)", DENY_TOOLS)
-        self.assertIn("Edit(**/.env)", DENY_TOOLS)
+        from bearings_sweep import deny_tools
+        rules = deny_tools(Path("/repo"))
+        self.assertNotIn(".env.example", rules)
+        self.assertIn("Read(**/.env)", rules)
+        self.assertIn("Edit(**/.env)", rules)
+
+    def test_run_cannot_change_its_own_guardrails(self):
+        from bearings_sweep import BEARINGS_DIR, deny_tools
+        rules = deny_tools(Path("/repo"))
+        self.assertIn("Edit(//repo/**)", rules)
+        self.assertIn("Write(//repo/**)", rules)
+        self.assertIn(f"Edit(//{str(BEARINGS_DIR).lstrip('/')}/**)", rules)
+
+    def test_git_allowlist_has_no_file_reading_forms(self):
+        from bearings_sweep import GIT_ALLOW
+        for sub in ["show", "grep", "diff", "cat-file", "-c", "-C", "config"]:
+            self.assertNotIn(sub, GIT_ALLOW)
 
 
 if __name__ == "__main__":
