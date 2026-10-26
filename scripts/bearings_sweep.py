@@ -371,11 +371,45 @@ def guard_restore(vault, snap):
     return changed
 
 
+# The **/.git/** deny rules match paths as text, and a case-insensitive
+# file system accepts spellings the rules do not. So the .git guard is
+# also enforced outside the model, like the vault guard: snapshot before
+# the run, compare and restore after it.
+
+def repo_guard_snapshot(path):
+    base = Path(path) / ".git"
+    if not base.is_dir():
+        return {}
+    files = [base / "config"]
+    hooks = base / "hooks"
+    if hooks.is_dir():
+        files += sorted(p for p in hooks.iterdir() if p.is_file())
+    return {str(p): p.read_bytes() for p in files if p.exists()}
+
+
+def repo_guard_restore(path, snap):
+    """Put .git/config and the hooks back as they were. Returns the
+    restored paths."""
+    changed = []
+    for fp, data in snap.items():
+        p = Path(fp)
+        if not p.exists() or p.read_bytes() != data:
+            p.write_bytes(data)
+            changed.append(fp)
+    hooks = Path(path) / ".git" / "hooks"
+    if snap and hooks.is_dir():
+        for p in sorted(hooks.iterdir()):
+            if p.is_file() and str(p) not in snap:
+                p.unlink()
+                changed.append(f"{p} (new file removed)")
+    return changed
+
+
 def bearings_home(env):
     return Path(env.get("BEARINGS_HOME") or Path(__file__).resolve().parent.parent)
 
 
-def run_claude(env, vault, machine, path):
+def run_claude(env, vault, machine, path, warnings):
     claude = env.get("BEARINGS_CLAUDE_BIN", "claude")
     target = path if machine["ssh"] is None else f"ssh={machine['ssh']}:{path}"
     home = bearings_home(env)
@@ -393,8 +427,13 @@ def run_claude(env, vault, machine, path):
         cmd += ["--settings", str(settings)]
     run_env = {**os.environ, "BEARINGS_HOME": str(home),
                "BEARINGS_VAULT_DIR": str(vault)}
+    repo_guard = repo_guard_snapshot(path) if machine["ssh"] is None else {}
     r = run(cmd, cwd=path if machine["ssh"] is None else str(Path.home()),
             timeout=900, env=run_env)
+    restored = repo_guard_restore(path, repo_guard)
+    if restored:
+        warnings.append("a run changed .git guard files; restored: "
+                        + ", ".join(restored))
     cost = tokens_in = tokens_out = 0
     try:
         j = json.loads(r.stdout)
@@ -480,7 +519,7 @@ def main():
     guard = guard_snapshot(vault)
 
     for name, machine, path, stamp, updated in stale if do_refresh else []:
-        good, c, ti, to = run_claude(env, vault, machine, path)
+        good, c, ti, to = run_claude(env, vault, machine, path, warnings)
         cost += c; t_in += ti; t_out += to
         actions.append(f"refreshed {name}" if good else f"refresh FAILED {name}")
 
@@ -488,7 +527,7 @@ def main():
     for name, machine, path, stamp in new:
         approve = cfg["create_new"] == "auto" or (name, machine["name"]) in approved
         if approve and not report_only:
-            good, c, ti, to = run_claude(env, vault, machine, path)
+            good, c, ti, to = run_claude(env, vault, machine, path, warnings)
             cost += c; t_in += ti; t_out += to
             actions.append(f"created {name}" if good else f"create FAILED {name}")
         elif cfg["create_new"] == "ask":

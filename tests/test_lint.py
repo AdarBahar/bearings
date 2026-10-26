@@ -267,5 +267,34 @@ class TestGuardFiles(unittest.TestCase):
         self.assertEqual(guard_restore(self.vault, guard_snapshot(self.vault)), [])
 
 
+class TestRepoGuard(unittest.TestCase):
+    def setUp(self):
+        self.repo = Path(tempfile.mkdtemp())
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.repo)
+
+    def test_restore_undoes_config_and_hook_changes(self):
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        snap = repo_guard_snapshot(self.repo)
+        config = self.repo / ".git" / "config"
+        original = config.read_bytes()
+        config.write_text(original.decode() + "[core]\n\tfsmonitor = payload\n")
+        hook = self.repo / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\npayload\n")
+        restored = repo_guard_restore(self.repo, snap)
+        self.assertEqual(len(restored), 2, restored)
+        self.assertEqual(config.read_bytes(), original)
+        self.assertFalse(hook.exists())
+
+    def test_folder_without_git_is_skipped(self):
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        plain = self.repo / "plain"
+        plain.mkdir()
+        self.assertEqual(repo_guard_snapshot(plain), {})
+        self.assertEqual(repo_guard_restore(plain, {}), [])
+
+
 if __name__ == "__main__":
     unittest.main()

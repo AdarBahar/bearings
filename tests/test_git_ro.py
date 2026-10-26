@@ -54,7 +54,8 @@ class TestGitRo(unittest.TestCase):
                      ("branch", "-D", "x"), ("branch", "--set-upstream-to=x"),
                      ("branch", "-u", "x"), ("branch", "--edit-description"),
                      ("tag", "-d", "x"), ("tag", "-a", "x"), ("tag", "-f", "x"),
-                     ("tag", "-F", "/tmp/x"), ("status", "--output=/tmp/x")]:
+                     ("tag", "-F", "/tmp/x"), ("status", "--output=/tmp/x"),
+                     ("log", "--stat"), ("log", "-p"), ("log", "--ext-diff")]:
             r = self.run_ro(*args)
             self.assertEqual(r.returncode, 1, args)
             self.assertIn("not allowed", r.stderr)
@@ -71,6 +72,22 @@ class TestGitRo(unittest.TestCase):
             r = self.run_ro(*args)
             self.assertEqual(r.returncode, 1, args)
             self.assertIn("not allowed", r.stderr)
+
+    def test_signature_placeholders_are_blocked(self):
+        # %G placeholders verify signatures, and that runs gpg.program.
+        for args in [("log", "--format=%G?"), ("log", "--pretty=%h %GG")]:
+            r = self.run_ro(*args)
+            self.assertEqual(r.returncode, 1, args)
+            self.assertIn("%G", r.stderr)
+
+    def test_repo_config_cannot_name_the_pager_or_hooks(self):
+        # The wrapper overrides each program-running key on the command
+        # line, which outranks the repo configuration.
+        subprocess.run(["git", "-C", str(self.repo), "config",
+                        "core.pager", "touch pager-ran"], check=True)
+        r = self.run_ro("log", "--format=%h")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse((self.repo / "pager-ran").exists())
 
     def test_no_args_prints_usage(self):
         r = self.run_ro()

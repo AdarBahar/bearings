@@ -19,6 +19,7 @@ Exit codes: git's own, or 1 when an argument is not allowed.
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 SUBCOMMANDS = {"log", "shortlog", "remote", "status", "tag", "branch",
                "rev-parse", "describe", "ls-files"}
@@ -30,7 +31,7 @@ FLAGS = {
             "--format", "--pretty", "--date", "--oneline", "--no-merges",
             "--merges", "--first-parent", "--all", "--tags", "--branches",
             "--reverse", "--max-count", "-n", "--abbrev-commit", "--decorate",
-            "--stat", "--name-only", "--name-status", "--follow"},
+            "--name-only", "--name-status", "--follow"},
     "shortlog": {"-s", "-n", "-e", "--since", "--until", "--no-merges"},
     "status": {"-s", "--short", "-b", "--branch", "--porcelain",
                "--untracked-files", "-u"},
@@ -73,6 +74,11 @@ def main(argv):
             if not flag_allowed(a, allowed):
                 print(f"git_ro: argument not allowed: {a}", file=sys.stderr)
                 return 1
+            # %G placeholders verify signatures, and that runs gpg.program.
+            if a.startswith(("--format=", "--pretty=")) and "%G" in a:
+                print(f"git_ro: %G placeholders are not allowed: {a}",
+                      file=sys.stderr)
+                return 1
         else:
             positionals.append(a)
     # `git remote <positional>` is a mutating sub-subcommand (add, set-url,
@@ -86,10 +92,27 @@ def main(argv):
     if sub in ("tag", "branch") and not any(a in ("-l", "--list") for a in args):
         args = ["--list"] + args
 
-    env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1", "GIT_PAGER": "cat",
-           "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}
-    base = ["git", "--no-pager", "-c", "core.pager=cat",
-            "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]
+    # Git reads configuration from the system, the user and the repo. The
+    # repo copy is attacker-influenced in a scanned external project, and
+    # several keys name a program to run. Command-line -c outranks every
+    # file, so override each such key; the fail-closed value is `false`.
+    # The system and global files are skipped completely, and discovery
+    # stops at the project folder.
+    env = {**os.environ,
+           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+           "GIT_ATTR_NOSYSTEM": "1", "GIT_PAGER": "cat",
+           "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
+           "GIT_CEILING_DIRECTORIES": str(Path.cwd().parent)}
+    base = ["git", "--no-pager",
+            "-c", "core.pager=cat",
+            "-c", "core.fsmonitor=false",
+            "-c", "core.hooksPath=" + os.devnull,
+            "-c", "core.attributesFile=" + os.devnull,
+            "-c", "log.showSignature=false",
+            "-c", "gpg.program=false",
+            "-c", "gpg.ssh.program=false",
+            "-c", "diff.external=false",
+            "-c", "safe.bareRepository=explicit"]
     return subprocess.call(base + [sub] + args, env=env)
 
 
