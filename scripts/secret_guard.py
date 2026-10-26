@@ -19,15 +19,9 @@ SAFE = {".env.example", ".env.sample", ".env.dist", ".env.template"}
 
 # A plain file name without a leading dot: it can match only itself.
 LITERAL_GLOB = re.compile(r"[a-z0-9][a-z0-9._-]*")
-# *.ext, with an optional **/ prefix: it matches names by extension only.
-EXT_GLOB = re.compile(r"(\*\*/)?\*\.[a-z0-9]+")
 
-# ripgrep type filters that cannot select a .env file. An unknown type
-# fails closed.
-SAFE_TYPES = {"py", "js", "ts", "jsx", "tsx", "md", "markdown", "json",
-              "yaml", "toml", "html", "css", "sh", "go", "rust", "java",
-              "c", "cpp", "h", "rb", "ruby", "php", "swift", "kotlin",
-              "sql", "xml", "docker", "make", "cmake", "txt"}
+# Folders a scope scan never needs to enter.
+SCAN_PRUNE = {".git", "node_modules", ".venv", "__pycache__"}
 
 
 def _name_blocked(name):
@@ -41,17 +35,18 @@ def is_blocked(file_path):
     return any(_name_blocked(n) for n in names)
 
 
-def glob_allowed(glob):
-    """Only a glob whose meaning needs no interpretation passes: a template
-    name, a plain file name without a leading dot, or *.ext with an
-    optional **/ prefix. Everything else fails closed — this guard does
-    not re-implement ripgrep's glob parser, so it never disagrees with
-    it."""
-    text = str(glob).strip().lower()
-    if text in SAFE:
+def scope_has_env(scope):
+    """True when a non-template .env file exists under the scope. An
+    unknown scope fails closed. The guard reasons about the files that
+    really exist, never about what a glob or type filter might mean, so
+    there is no parser to disagree with."""
+    if not scope or not Path(str(scope)).is_dir():
         return True
-    return (LITERAL_GLOB.fullmatch(text) is not None
-            or EXT_GLOB.fullmatch(text) is not None)
+    for _root, dirs, files in os.walk(str(scope)):
+        dirs[:] = [d for d in dirs if d not in SCAN_PRUNE]
+        if any(_name_blocked(f) for f in files):
+            return True
+    return False
 
 
 def main():
@@ -66,27 +61,23 @@ def main():
             print(f"bearings guard: {Path(str(value)).name} can hold secrets "
                   "— read .env.example or the code instead", file=sys.stderr)
             return 2
-    # A glob that could reach the .env family is a read of it. Only
-    # unambiguous glob forms pass.
-    glob = tool_input.get("glob")
-    if glob and not glob_allowed(glob):
-        print(f"bearings guard: the glob {glob!r} is not an allowed form — "
-              "use *.py-style, **/*.py, or a plain file name", file=sys.stderr)
-        return 2
-    # A folder-scoped Grep searches every file in the tree, the .env
-    # family among them, so it needs a filter that excludes that family:
-    # a safe glob, or a type from the known-safe list.
+    # A folder-scoped Grep can reach every file under its scope, and any
+    # glob or type filter can be written (or parsed) to include a .env
+    # name. So the rule does not judge filters: a plain file-name glob
+    # always passes (it matches only itself, and never a dotfile), and
+    # any other folder search passes only when the scope holds no
+    # non-template .env file.
     if data.get("tool_name") == "Grep":
-        rtype = tool_input.get("type")
-        if rtype and str(rtype).lower() not in SAFE_TYPES:
-            print(f"bearings guard: the type {rtype!r} is not on the safe "
-                  "list — use a glob such as *.py", file=sys.stderr)
-            return 2
+        glob = tool_input.get("glob")
+        if glob and LITERAL_GLOB.fullmatch(str(glob).strip().lower()):
+            return 0
         path = tool_input.get("path")
-        dir_scope = not path or Path(str(path)).is_dir()
-        if dir_scope and not rtype and not glob:
-            print("bearings guard: a folder Grep needs a glob or type that "
-                  "excludes .env files (for example glob *.py)", file=sys.stderr)
+        if path and Path(str(path)).is_file():
+            return 0  # single-file scope; the name checks above passed it
+        if scope_has_env(path or data.get("cwd")):
+            print("bearings guard: the search scope holds .env files — "
+                  "grep a subfolder without them, use a plain file-name "
+                  "glob, or Read the files you need", file=sys.stderr)
             return 2
     return 0
 

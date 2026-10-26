@@ -434,28 +434,38 @@ class TestSecretGuard(unittest.TestCase):
         r = self.run_guard({"file_path": str(link)})
         self.assertEqual(r.returncode, 2, r.stderr)
 
-    def test_only_unambiguous_globs_pass(self):
+    def test_grep_in_a_scope_with_env_files_is_blocked(self):
         r = self.run_guard({"path": str(self.scope / ".env.prod")}, tool="Grep")
         self.assertEqual(r.returncode, 2, r.stderr)
-        # Everything outside the allowed forms fails closed, so a glob
-        # like "*customer" (which reaches .env.customer) never runs.
-        for glob in [".env*", "*", ".*", "*customer", "{*.py,.env*}",
-                     "!.env*", "src/", "[a]pp.py", "a\\b", "?x", "*.p?"]:
-            r = self.run_guard({"pattern": "x", "glob": glob}, tool="Grep")
-            self.assertEqual(r.returncode, 2, (glob, r.stderr))
-        for glob in ["*.py", "**/*.md", "package.json", ".env.example"]:
-            r = self.run_guard({"pattern": "x", "glob": glob}, tool="Grep")
-            self.assertEqual(r.returncode, 0, (glob, r.stderr))
+        # The scope holds .env.customer, so no wildcard glob, type filter
+        # or unfiltered search runs — whatever the filter claims to match.
+        for tool_input in [{"pattern": "x"},
+                           {"pattern": "x", "type": "py"},
+                           {"pattern": "x", "glob": "*.py"},
+                           {"pattern": "x", "glob": ".env*"},
+                           {"pattern": "x", "glob": "*customer"},
+                           {"pattern": "x", "glob": "{*.py,.env*}"},
+                           {"pattern": "x", "glob": "!.env*"}]:
+            r = self.run_guard(tool_input, tool="Grep")
+            self.assertEqual(r.returncode, 2, (tool_input, r.stderr))
 
-    def test_folder_grep_needs_a_filter(self):
-        r = self.run_guard({"pattern": "secret"}, tool="Grep")
-        self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertIn("glob or type", r.stderr)
-        r = self.run_guard({"pattern": "secret", "type": "py"}, tool="Grep")
+    def test_grep_literal_glob_and_clean_scope_pass(self):
+        # A plain file-name glob matches only itself, never a dotfile.
+        r = self.run_guard({"pattern": "x", "glob": "package.json"}, tool="Grep")
         self.assertEqual(r.returncode, 0, r.stderr)
-        # An unknown type fails closed.
-        r = self.run_guard({"pattern": "secret", "type": "weird"}, tool="Grep")
-        self.assertEqual(r.returncode, 2, r.stderr)
+        # A single-file scope passes once the name checks accept it.
+        r = self.run_guard({"pattern": "x",
+                            "path": str(self.scope / "app.py")}, tool="Grep")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # A folder without .env files is free to search, filter or not.
+        clean = self.scope / "src"
+        clean.mkdir()
+        (clean / "main.py").write_text("x = 1\n")
+        for tool_input in [{"pattern": "x", "path": str(clean)},
+                           {"pattern": "x", "path": str(clean), "glob": "*"},
+                           {"pattern": "x", "path": str(clean), "type": "py"}]:
+            r = self.run_guard(tool_input, tool="Grep")
+            self.assertEqual(r.returncode, 0, (tool_input, r.stderr))
 
     def test_templates_and_other_files_pass(self):
         for name in [".env.example", ".env.sample", ".env.dist",
