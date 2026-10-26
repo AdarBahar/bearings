@@ -524,9 +524,12 @@ def repo_guard_restore(path, snap):
     current = {str(p) for p, _ in _repo_guard_walk(base)}
     for fp, entry in snap.items():
         # A linked folder is guarded through its target: additions there
-        # must go too. Only a target inside the project is walked.
+        # must go too. Only the target recorded in the snapshot is walked
+        # — never the link's current target, which a run may have pointed
+        # at a folder the guard does not own — and only inside the
+        # project.
         if entry[0] == "dirlink":
-            target = Path(fp).resolve()
+            target = (Path(fp).parent / entry[1]).resolve()
             if target.is_dir() and _inside(target, root):
                 current.update(str(q) for q, _ in _repo_guard_walk(target))
     # Remove additions first: a swapped folder can hold planted entries,
