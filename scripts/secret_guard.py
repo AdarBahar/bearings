@@ -53,6 +53,10 @@ def scope_has_env(scope):
         entries += len(dirs) + len(files)
         if entries > SCAN_MAX_ENTRIES or time.monotonic() > deadline:
             return True
+        # A symlinked folder fails closed: this scan does not enter it,
+        # and the search tool may.
+        if any(os.path.islink(os.path.join(root, d)) for d in dirs):
+            return True
         for f in files:
             if _name_blocked(f):
                 return True

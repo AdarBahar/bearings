@@ -483,6 +483,12 @@ class TestSecretGuard(unittest.TestCase):
         link.symlink_to(self.scope / ".env.customer")
         self.assertTrue(secret_guard.scope_has_env(clean))
         link.unlink()
+        # A symlinked folder fails closed: the scan does not enter it,
+        # and the search tool may.
+        sub = clean / "linked-dir"
+        sub.symlink_to(self.scope)
+        self.assertTrue(secret_guard.scope_has_env(clean))
+        sub.unlink()
         # A budget overrun fails closed.
         old = secret_guard.SCAN_MAX_ENTRIES
         secret_guard.SCAN_MAX_ENTRIES = 0
