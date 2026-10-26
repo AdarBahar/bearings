@@ -335,6 +335,41 @@ class TestRepoGuard(unittest.TestCase):
         self.assertEqual(repo_guard_snapshot(plain), {})
         self.assertEqual(repo_guard_restore(plain, {}), [])
 
+    def test_hook_mode_is_restored(self):
+        # Removing the execute bit disables a hook even with its contents
+        # intact, so the mode is guarded state.
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        hooks = self.repo / ".git" / "hooks"
+        hook = hooks / "pre-commit"
+        hook.write_text("#!/bin/sh\nexit 0\n")
+        hook.chmod(0o755)
+        snap = repo_guard_snapshot(self.repo)
+        hook.write_text("#!/bin/sh\npayload\n")
+        hook.chmod(0o644)
+        repo_guard_restore(self.repo, snap)
+        self.assertEqual(hook.read_text(), "#!/bin/sh\nexit 0\n")
+        self.assertEqual(hook.stat().st_mode & 0o7777, 0o755)
+
+    def test_link_target_outside_the_project_is_not_walked(self):
+        # Following an outside target would read, and later prune,
+        # folders the guard does not own.
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        outside = Path(tempfile.mkdtemp())
+        try:
+            (outside / "keep.txt").write_text("keep\n")
+            hooks = self.repo / ".git" / "hooks"
+            shutil.rmtree(hooks)
+            hooks.symlink_to(outside)
+            snap = repo_guard_snapshot(self.repo)
+            self.assertFalse(any(str(outside) in k for k in snap))
+            (outside / "added.txt").write_text("added\n")
+            repo_guard_restore(self.repo, snap)
+            self.assertTrue((outside / "keep.txt").exists())
+            self.assertTrue((outside / "added.txt").exists())
+            self.assertTrue(hooks.is_symlink())
+        finally:
+            shutil.rmtree(outside)
+
     def test_preexisting_symlinks_survive_a_noop_run(self):
         # A repo may keep .git/config or .git/hooks as symlinks on purpose.
         # The guard must record and keep that link state.
@@ -396,9 +431,27 @@ class TestSecretGuard(unittest.TestCase):
     def test_grep_path_and_glob_are_blocked(self):
         r = self.run_guard("/some/project/.env.prod", key="path", tool="Grep")
         self.assertEqual(r.returncode, 2, r.stderr)
-        r = self.run_guard(".env*", key="glob", tool="Grep")
-        self.assertEqual(r.returncode, 2, r.stderr)
+        for glob in [".env*", "*", ".*"]:
+            r = self.run_guard(glob, key="glob", tool="Grep")
+            self.assertEqual(r.returncode, 2, (glob, r.stderr))
         r = self.run_guard("*.py", key="glob", tool="Grep")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_folder_grep_needs_a_filter(self):
+        # Without a glob or type, a folder Grep reaches every file,
+        # including any .env suffix outside the static deny list.
+        payload = json.dumps({"tool_name": "Grep",
+                              "tool_input": {"pattern": "secret"}})
+        r = subprocess.run([sys.executable,
+                            str(ROOT / "scripts" / "secret_guard.py")],
+                           input=payload, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("glob or type", r.stderr)
+        payload = json.dumps({"tool_name": "Grep",
+                              "tool_input": {"pattern": "secret", "type": "py"}})
+        r = subprocess.run([sys.executable,
+                            str(ROOT / "scripts" / "secret_guard.py")],
+                           input=payload, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_templates_and_other_files_pass(self):

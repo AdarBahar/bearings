@@ -368,7 +368,8 @@ def guard_snapshot(vault):
     tdir = vault / "_templates"
     if tdir.is_dir():
         files += sorted(p for p in tdir.iterdir() if p.is_file())
-    return {str(p.relative_to(vault)): p.read_bytes() for p in files if p.exists()}
+    return {str(p.relative_to(vault)): (p.read_bytes(), p.stat().st_mode & 0o7777)
+            for p in files if p.exists()}
 
 
 def _write_guarded(p, data):
@@ -388,10 +389,12 @@ def guard_restore(vault, snap):
         tdir.unlink()
         tdir.mkdir()
         changed.append("_templates (symlink replaced)")
-    for rel, data in snap.items():
+    for rel, (data, mode) in snap.items():
         p = vault / rel
-        if p.is_symlink() or not p.exists() or p.read_bytes() != data:
+        if (p.is_symlink() or not p.exists() or p.read_bytes() != data
+                or (p.stat().st_mode & 0o7777) != mode):
             _write_guarded(p, data)
+            os.chmod(p, mode)
             changed.append(rel)
     if tdir.is_dir():
         for p in sorted(tdir.iterdir()):
@@ -436,40 +439,57 @@ def _repo_guard_walk(base):
             yield p, "link" if p.is_symlink() else "file"
 
 
-def _snapshot_entry(p, kind, snap):
+def _snapshot_entry(p, kind, snap, root):
     """Record one guarded entry. A symlink's resolved target is guarded
     too — a run could change the target instead of the link — so a file
-    target is recorded as a file, and a folder target is walked."""
+    target is recorded as a file, and a folder target is walked. Only a
+    target inside the project is followed: following one outside would
+    read, and later prune, folders the guard does not own."""
     key = str(p)
     if key in snap:
         return
     if kind == "file":
-        snap[key] = ("file", p.read_bytes())
+        # The mode is guarded state too: a hook with its execute bit
+        # removed is a disabled hook, even with its contents intact.
+        snap[key] = ("file", p.read_bytes(), p.stat().st_mode & 0o7777)
         return
     snap[key] = (kind, os.readlink(p))
     target = p.resolve()
+    if not _inside(target, root):
+        return
     if target.is_file():
-        _snapshot_entry(target, "file", snap)
+        _snapshot_entry(target, "file", snap, root)
     elif target.is_dir():
         for q, k in _repo_guard_walk(target):
-            _snapshot_entry(q, k, snap)
+            _snapshot_entry(q, k, snap, root)
+
+
+def _inside(target, root):
+    try:
+        target.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def repo_guard_snapshot(path):
     base = Path(path) / ".git"
     if base.is_symlink() or not base.is_dir():
         return {}
+    root = Path(path).resolve()
     snap = {}
     for p, kind in _repo_guard_walk(base):
-        _snapshot_entry(p, kind, snap)
+        _snapshot_entry(p, kind, snap, root)
     return snap
 
 
 def _entry_matches(p, entry):
-    kind, data = entry
-    if kind == "file":
-        return p.is_file() and not p.is_symlink() and p.read_bytes() == data
-    return p.is_symlink() and os.readlink(p) == data
+    if entry[0] == "file":
+        _, data, mode = entry
+        return (p.is_file() and not p.is_symlink()
+                and (p.stat().st_mode & 0o7777) == mode
+                and p.read_bytes() == data)
+    return p.is_symlink() and os.readlink(p) == entry[1]
 
 
 def _remove_entry(p):
@@ -480,13 +500,13 @@ def _remove_entry(p):
 
 
 def _restore_entry(p, entry):
-    kind, data = entry
     _remove_entry(p)
     p.parent.mkdir(parents=True, exist_ok=True)
-    if kind == "file":
-        p.write_bytes(data)
+    if entry[0] == "file":
+        p.write_bytes(entry[1])
+        os.chmod(p, entry[2])
     else:
-        p.symlink_to(data)
+        p.symlink_to(entry[1])
 
 
 def repo_guard_restore(path, snap):
@@ -500,13 +520,14 @@ def repo_guard_restore(path, snap):
         base.unlink()
         base.mkdir()
         changed.append(f"{base} (symlink replaced)")
+    root = Path(path).resolve()
     current = {str(p) for p, _ in _repo_guard_walk(base)}
     for fp, entry in snap.items():
         # A linked folder is guarded through its target: additions there
-        # must go too.
+        # must go too. Only a target inside the project is walked.
         if entry[0] == "dirlink":
             target = Path(fp).resolve()
-            if target.is_dir():
+            if target.is_dir() and _inside(target, root):
                 current.update(str(q) for q, _ in _repo_guard_walk(target))
     # Remove additions first: a swapped folder can hold planted entries,
     # and they must go before the folder itself is put back.
@@ -642,8 +663,10 @@ def main():
 
     guard = guard_snapshot(vault)
     pending_out = []
+    attempted = False
     try:
         for name, machine, path, stamp, updated in stale if do_refresh else []:
+            attempted = True
             good, c, ti, to = run_claude(env, vault, machine, path, warnings)
             cost += c; t_in += ti; t_out += to
             actions.append(f"refreshed {name}" if good else f"refresh FAILED {name}")
@@ -651,14 +674,16 @@ def main():
         for name, machine, path, stamp in new:
             approve = cfg["create_new"] == "auto" or (name, machine["name"]) in approved
             if approve and not report_only:
+                attempted = True
                 good, c, ti, to = run_claude(env, vault, machine, path, warnings)
                 cost += c; t_in += ti; t_out += to
                 actions.append(f"created {name}" if good else f"create FAILED {name}")
             elif cfg["create_new"] == "ask":
                 pending_out.append(f"- [ ] {name} @{machine['name']} (changed {stamp})")
     finally:
-        # The vault guard must run even when a refresh raises.
-        if actions:
+        # The vault guard must run even when the first refresh raises, so
+        # it keys on attempted runs, not on completed actions.
+        if attempted:
             restored = guard_restore(vault, guard)
             if restored:
                 warnings.append("a run changed guarded files; restored: "
