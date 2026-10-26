@@ -359,18 +359,23 @@ def _write_guarded(p, data):
     and a plain write would then land at the link target."""
     if p.is_symlink():
         p.unlink()
+    p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(data)
 
 
 def guard_restore(vault, snap):
     """Put every guarded file back as it was. Returns the restored names."""
     changed = []
+    tdir = vault / "_templates"
+    if tdir.is_symlink():
+        tdir.unlink()
+        tdir.mkdir()
+        changed.append("_templates (symlink replaced)")
     for rel, data in snap.items():
         p = vault / rel
         if p.is_symlink() or not p.exists() or p.read_bytes() != data:
             _write_guarded(p, data)
             changed.append(rel)
-    tdir = vault / "_templates"
     if tdir.is_dir():
         for p in sorted(tdir.iterdir()):
             if p.is_file() and str(p.relative_to(vault)) not in snap:
@@ -384,45 +389,63 @@ def guard_restore(vault, snap):
 # also enforced outside the model, like the vault guard: snapshot before
 # the run, compare and restore after it.
 
-# Guarded .git entries: the config files, and the folders whose files can
-# name a program (hooks) or assign one through attributes (info).
-REPO_GUARD_FILES = ("config", "config.worktree")
-REPO_GUARD_DIRS = ("hooks", "info")
+# The whole .git tree is guarded, except the content stores that change
+# legitimately and are not configuration. This also covers the config,
+# hooks and info files of submodules (.git/modules/**) and linked
+# worktrees (.git/worktrees/**).
+REPO_GUARD_SKIP_DIRS = {"objects", "refs", "logs", "lfs"}
+REPO_GUARD_SKIP_FILES = {"index", "packed-refs", "FETCH_HEAD", "ORIG_HEAD",
+                         "COMMIT_EDITMSG", "shallow"}
+
+
+def _repo_guard_walk(base, on_symlink_dir=None):
+    """Yield the guarded files under .git. A symlinked folder is handed to
+    on_symlink_dir (restore replaces it); os.walk never follows it."""
+    for root, dirs, files in os.walk(base):
+        for d in list(dirs):
+            dp = Path(root) / d
+            if dp.is_symlink() and on_symlink_dir:
+                on_symlink_dir(dp)
+        dirs[:] = [d for d in dirs if d not in REPO_GUARD_SKIP_DIRS]
+        for f in files:
+            if f not in REPO_GUARD_SKIP_FILES:
+                yield Path(root) / f
 
 
 def repo_guard_snapshot(path):
     base = Path(path) / ".git"
-    if not base.is_dir():
+    if base.is_symlink() or not base.is_dir():
         return {}
-    files = [base / f for f in REPO_GUARD_FILES]
-    for d in REPO_GUARD_DIRS:
-        dp = base / d
-        if dp.is_dir():
-            files += sorted(p for p in dp.iterdir() if p.is_file())
-    return {str(p): p.read_bytes() for p in files if p.is_file()}
+    return {str(p): p.read_bytes()
+            for p in _repo_guard_walk(base) if p.is_file() and not p.is_symlink()}
 
 
 def repo_guard_restore(path, snap):
-    """Put the guarded .git files back as they were, and remove files a run
-    added there. Returns the changed paths."""
+    """Put the guarded .git files back as they were, replace symlink swaps,
+    and remove files a run added. Returns the changed paths."""
     if not snap:
         return []
     changed = []
+    base = Path(path) / ".git"
+    if base.is_symlink():
+        base.unlink()
+        base.mkdir()
+        changed.append(f"{base} (symlink replaced)")
+
+    def replace_symlink_dir(dp):
+        dp.unlink()
+        dp.mkdir()
+        changed.append(f"{dp} (symlink replaced)")
+
+    current = {str(p) for p in _repo_guard_walk(base, replace_symlink_dir)}
     for fp, data in snap.items():
         p = Path(fp)
         if p.is_symlink() or not p.is_file() or p.read_bytes() != data:
             _write_guarded(p, data)
             changed.append(fp)
-    base = Path(path) / ".git"
-    new_files = [base / f for f in REPO_GUARD_FILES]
-    for d in REPO_GUARD_DIRS:
-        dp = base / d
-        if dp.is_dir():
-            new_files += sorted(dp.iterdir())
-    for p in new_files:
-        if (p.is_file() or p.is_symlink()) and str(p) not in snap:
-            p.unlink()
-            changed.append(f"{p} (new file removed)")
+    for fp in sorted(current - set(snap)):
+        Path(fp).unlink()
+        changed.append(f"{fp} (new file removed)")
     return changed
 
 

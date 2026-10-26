@@ -21,9 +21,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-# No `status`: it can re-read racily-clean files through a clean filter,
-# and `filter.<name>.clean` is a program named by attributes the repo
-# controls. `ls-files -m` answers the same question from stat data only.
+# No `status` and no modification checks: they can re-read racily-clean
+# files through a clean filter, and `filter.<name>.clean` is a program
+# named by attributes the repo controls.
 SUBCOMMANDS = {"log", "shortlog", "remote", "tag", "branch",
                "rev-parse", "describe", "ls-files"}
 
@@ -46,7 +46,7 @@ FLAGS = {
                   "--is-inside-work-tree", "--git-dir"},
     "describe": {"--tags", "--always", "--abbrev", "--long", "--match"},
     "ls-files": {"-z", "--others", "-o", "--exclude-standard", "--cached",
-                 "-c", "-m", "--modified", "--full-name"},
+                 "-c", "--full-name"},
 }
 
 # --pretty and --format accept only an inline format string or a built-in

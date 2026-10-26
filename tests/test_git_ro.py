@@ -36,7 +36,7 @@ class TestGitRo(unittest.TestCase):
         for args in [("tag", "--list"), ("branch", "-a"),
                      ("log", "--format=%h", "-3"), ("log", "--since=2020-01-01"),
                      ("log", "--pretty=oneline"), ("rev-parse", "--show-toplevel"),
-                     ("ls-files",), ("ls-files", "-m"),
+                     ("ls-files",),
                      ("remote", "-v"), ("shortlog", "-s", "-n")]:
             r = self.run_ro(*args)
             self.assertEqual(r.returncode, 0, (args, r.stderr))
@@ -59,6 +59,7 @@ class TestGitRo(unittest.TestCase):
                      ("branch", "-u", "x"), ("branch", "--edit-description"),
                      ("tag", "-d", "x"), ("tag", "-a", "x"), ("tag", "-f", "x"),
                      ("tag", "-F", "/tmp/x"), ("describe", "--dirty"),
+                     ("ls-files", "-m"), ("ls-files", "--modified"),
                      ("log", "--stat"), ("log", "-p"), ("log", "--ext-diff")]:
             r = self.run_ro(*args)
             self.assertEqual(r.returncode, 1, args)
