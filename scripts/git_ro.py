@@ -21,7 +21,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-SUBCOMMANDS = {"log", "shortlog", "remote", "status", "tag", "branch",
+# No `status`: it can re-read racily-clean files through a clean filter,
+# and `filter.<name>.clean` is a program named by attributes the repo
+# controls. `ls-files -m` answers the same question from stat data only.
+SUBCOMMANDS = {"log", "shortlog", "remote", "tag", "branch",
                "rev-parse", "describe", "ls-files"}
 
 # Per subcommand: the read-only flags the bearings skills need. A flag
@@ -33,8 +36,6 @@ FLAGS = {
             "--reverse", "--max-count", "-n", "--abbrev-commit", "--decorate",
             "--name-only", "--name-status", "--follow"},
     "shortlog": {"-s", "-n", "-e", "--since", "--until", "--no-merges"},
-    "status": {"-s", "--short", "-b", "--branch", "--porcelain",
-               "--untracked-files", "-u"},
     "remote": {"-v", "--verbose"},
     "tag": {"--list", "-l", "--sort", "-n", "--contains", "--points-at",
             "--merged", "--no-merged"},
@@ -43,11 +44,16 @@ FLAGS = {
                "--show-current"},
     "rev-parse": {"--show-toplevel", "--abbrev-ref", "--short", "--verify",
                   "--is-inside-work-tree", "--git-dir"},
-    "describe": {"--tags", "--always", "--abbrev", "--dirty", "--long",
-                 "--match"},
+    "describe": {"--tags", "--always", "--abbrev", "--long", "--match"},
     "ls-files": {"-z", "--others", "-o", "--exclude-standard", "--cached",
-                 "-c", "--full-name"},
+                 "-c", "-m", "--modified", "--full-name"},
 }
+
+# --pretty and --format accept only an inline format string or a built-in
+# name. A repo can define pretty.<alias> in its config, and an alias can
+# expand to %G placeholders, so alias names are rejected.
+BUILTIN_PRETTY = {"oneline", "short", "medium", "full", "fuller", "raw",
+                  "reference", "email"}
 
 
 def flag_allowed(arg, allowed):
@@ -74,11 +80,17 @@ def main(argv):
             if not flag_allowed(a, allowed):
                 print(f"git_ro: argument not allowed: {a}", file=sys.stderr)
                 return 1
-            # %G placeholders verify signatures, and that runs gpg.program.
-            if a.startswith(("--format=", "--pretty=")) and "%G" in a:
-                print(f"git_ro: %G placeholders are not allowed: {a}",
-                      file=sys.stderr)
-                return 1
+            if a.startswith(("--format=", "--pretty=")):
+                value = a.split("=", 1)[1]
+                inline = value.startswith(("format:", "tformat:")) or "%" in value
+                if not inline and value not in BUILTIN_PRETTY:
+                    print(f"git_ro: pretty alias not allowed: {a}", file=sys.stderr)
+                    return 1
+                # %G placeholders verify signatures, which runs a gpg program.
+                if "%G" in value:
+                    print(f"git_ro: %G placeholders are not allowed: {a}",
+                          file=sys.stderr)
+                    return 1
         else:
             positionals.append(a)
     # `git remote <positional>` is a mutating sub-subcommand (add, set-url,
@@ -109,7 +121,9 @@ def main(argv):
             "-c", "core.hooksPath=" + os.devnull,
             "-c", "core.attributesFile=" + os.devnull,
             "-c", "log.showSignature=false",
+            "-c", "gpg.format=openpgp",
             "-c", "gpg.program=false",
+            "-c", "gpg.x509.program=false",
             "-c", "gpg.ssh.program=false",
             "-c", "diff.external=false",
             "-c", "safe.bareRepository=explicit"]

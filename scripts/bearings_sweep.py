@@ -354,13 +354,21 @@ def guard_snapshot(vault):
     return {str(p.relative_to(vault)): p.read_bytes() for p in files if p.exists()}
 
 
+def _write_guarded(p, data):
+    """Replace, never follow: a run could have put a symlink at the path,
+    and a plain write would then land at the link target."""
+    if p.is_symlink():
+        p.unlink()
+    p.write_bytes(data)
+
+
 def guard_restore(vault, snap):
     """Put every guarded file back as it was. Returns the restored names."""
     changed = []
     for rel, data in snap.items():
         p = vault / rel
-        if not p.exists() or p.read_bytes() != data:
-            p.write_bytes(data)
+        if p.is_symlink() or not p.exists() or p.read_bytes() != data:
+            _write_guarded(p, data)
             changed.append(rel)
     tdir = vault / "_templates"
     if tdir.is_dir():
@@ -376,32 +384,45 @@ def guard_restore(vault, snap):
 # also enforced outside the model, like the vault guard: snapshot before
 # the run, compare and restore after it.
 
+# Guarded .git entries: the config files, and the folders whose files can
+# name a program (hooks) or assign one through attributes (info).
+REPO_GUARD_FILES = ("config", "config.worktree")
+REPO_GUARD_DIRS = ("hooks", "info")
+
+
 def repo_guard_snapshot(path):
     base = Path(path) / ".git"
     if not base.is_dir():
         return {}
-    files = [base / "config"]
-    hooks = base / "hooks"
-    if hooks.is_dir():
-        files += sorted(p for p in hooks.iterdir() if p.is_file())
-    return {str(p): p.read_bytes() for p in files if p.exists()}
+    files = [base / f for f in REPO_GUARD_FILES]
+    for d in REPO_GUARD_DIRS:
+        dp = base / d
+        if dp.is_dir():
+            files += sorted(p for p in dp.iterdir() if p.is_file())
+    return {str(p): p.read_bytes() for p in files if p.is_file()}
 
 
 def repo_guard_restore(path, snap):
-    """Put .git/config and the hooks back as they were. Returns the
-    restored paths."""
+    """Put the guarded .git files back as they were, and remove files a run
+    added there. Returns the changed paths."""
+    if not snap:
+        return []
     changed = []
     for fp, data in snap.items():
         p = Path(fp)
-        if not p.exists() or p.read_bytes() != data:
-            p.write_bytes(data)
+        if p.is_symlink() or not p.is_file() or p.read_bytes() != data:
+            _write_guarded(p, data)
             changed.append(fp)
-    hooks = Path(path) / ".git" / "hooks"
-    if snap and hooks.is_dir():
-        for p in sorted(hooks.iterdir()):
-            if p.is_file() and str(p) not in snap:
-                p.unlink()
-                changed.append(f"{p} (new file removed)")
+    base = Path(path) / ".git"
+    new_files = [base / f for f in REPO_GUARD_FILES]
+    for d in REPO_GUARD_DIRS:
+        dp = base / d
+        if dp.is_dir():
+            new_files += sorted(dp.iterdir())
+    for p in new_files:
+        if (p.is_file() or p.is_symlink()) and str(p) not in snap:
+            p.unlink()
+            changed.append(f"{p} (new file removed)")
     return changed
 
 

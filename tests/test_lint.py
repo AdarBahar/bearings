@@ -283,10 +283,33 @@ class TestRepoGuard(unittest.TestCase):
         config.write_text(original.decode() + "[core]\n\tfsmonitor = payload\n")
         hook = self.repo / ".git" / "hooks" / "pre-commit"
         hook.write_text("#!/bin/sh\npayload\n")
+        info = self.repo / ".git" / "info"
+        info.mkdir(exist_ok=True)
+        attrs = info / "attributes"
+        attrs.write_text("* filter=payload\n")
+        worktree = self.repo / ".git" / "config.worktree"
+        worktree.write_text("[core]\n\tfsmonitor = payload\n")
         restored = repo_guard_restore(self.repo, snap)
-        self.assertEqual(len(restored), 2, restored)
+        self.assertEqual(len(restored), 4, restored)
         self.assertEqual(config.read_bytes(), original)
         self.assertFalse(hook.exists())
+        self.assertFalse(attrs.exists())
+        self.assertFalse(worktree.exists())
+
+    def test_restore_replaces_a_planted_symlink(self):
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        snap = repo_guard_snapshot(self.repo)
+        config = self.repo / ".git" / "config"
+        original = config.read_bytes()
+        target = self.repo / "elsewhere"
+        target.write_text("outside\n")
+        config.unlink()
+        config.symlink_to(target)
+        repo_guard_restore(self.repo, snap)
+        self.assertFalse(config.is_symlink())
+        self.assertEqual(config.read_bytes(), original)
+        # The restore wrote the file itself, never through the link.
+        self.assertEqual(target.read_text(), "outside\n")
 
     def test_folder_without_git_is_skipped(self):
         from bearings_sweep import repo_guard_restore, repo_guard_snapshot

@@ -33,15 +33,19 @@ class TestGitRo(unittest.TestCase):
         return r.stdout.split()
 
     def test_read_only_forms_are_allowed(self):
-        for args in [("status",), ("tag", "--list"), ("branch", "-a"),
+        for args in [("tag", "--list"), ("branch", "-a"),
                      ("log", "--format=%h", "-3"), ("log", "--since=2020-01-01"),
-                     ("rev-parse", "--show-toplevel"), ("ls-files",),
+                     ("log", "--pretty=oneline"), ("rev-parse", "--show-toplevel"),
+                     ("ls-files",), ("ls-files", "-m"),
                      ("remote", "-v"), ("shortlog", "-s", "-n")]:
             r = self.run_ro(*args)
             self.assertEqual(r.returncode, 0, (args, r.stderr))
 
     def test_unknown_subcommand_is_blocked(self):
-        for sub in ["show", "grep", "diff", "push", "config", "cat-file"]:
+        # `status` can run a clean filter on racily-clean files, so it is
+        # not offered.
+        for sub in ["show", "grep", "diff", "push", "config", "cat-file",
+                    "status"]:
             r = self.run_ro(sub)
             self.assertEqual(r.returncode, 1, sub)
             self.assertIn("not allowed", r.stderr)
@@ -54,7 +58,7 @@ class TestGitRo(unittest.TestCase):
                      ("branch", "-D", "x"), ("branch", "--set-upstream-to=x"),
                      ("branch", "-u", "x"), ("branch", "--edit-description"),
                      ("tag", "-d", "x"), ("tag", "-a", "x"), ("tag", "-f", "x"),
-                     ("tag", "-F", "/tmp/x"), ("status", "--output=/tmp/x"),
+                     ("tag", "-F", "/tmp/x"), ("describe", "--dirty"),
                      ("log", "--stat"), ("log", "-p"), ("log", "--ext-diff")]:
             r = self.run_ro(*args)
             self.assertEqual(r.returncode, 1, args)
@@ -74,11 +78,19 @@ class TestGitRo(unittest.TestCase):
             self.assertIn("not allowed", r.stderr)
 
     def test_signature_placeholders_are_blocked(self):
-        # %G placeholders verify signatures, and that runs gpg.program.
+        # %G placeholders verify signatures, and that runs a gpg program.
         for args in [("log", "--format=%G?"), ("log", "--pretty=%h %GG")]:
             r = self.run_ro(*args)
             self.assertEqual(r.returncode, 1, args)
             self.assertIn("%G", r.stderr)
+
+    def test_pretty_alias_is_blocked(self):
+        # pretty.<alias> in the repo config can expand to %G placeholders.
+        subprocess.run(["git", "-C", str(self.repo), "config",
+                        "pretty.evil", "%GG"], check=True)
+        r = self.run_ro("log", "--pretty=evil")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("alias not allowed", r.stderr)
 
     def test_repo_config_cannot_name_the_pager_or_hooks(self):
         # The wrapper overrides each program-running key on the command
