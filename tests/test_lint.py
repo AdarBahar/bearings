@@ -447,6 +447,48 @@ class TestRepoGuard(unittest.TestCase):
         self.assertTrue((src / "app.py").exists())
         self.assertFalse((actual / "planted").exists())
 
+    def test_middle_link_component_is_guarded_not_replaced(self):
+        # .git/hooks -> current/hooks, where current -> release-v1. The
+        # middle link is guarded state: a no-op restore keeps it, and the
+        # sibling files stay reachable through it.
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        release = self.repo / "release-v1"
+        (release / "hooks").mkdir(parents=True)
+        (release / "hooks" / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+        (release / "settings.json").write_text("{}\n")
+        current = self.repo / "current"
+        current.symlink_to(release)
+        hooks = self.repo / ".git" / "hooks"
+        shutil.rmtree(hooks)
+        hooks.symlink_to(current / "hooks")
+        snap = repo_guard_snapshot(self.repo)
+        self.assertEqual(repo_guard_restore(self.repo, snap), [])
+        self.assertTrue(current.is_symlink())
+        self.assertEqual((current / "settings.json").read_text(), "{}\n")
+
+    def test_middle_link_to_outside_blocks_external_reads(self):
+        # .git/hooks -> ext/hooks, where ext points outside the project:
+        # the snapshot must not read the external files through it.
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        outside = Path(tempfile.mkdtemp())
+        try:
+            (outside / "hooks").mkdir()
+            (outside / "hooks" / "secret").write_text("external secret\n")
+            ext = self.repo / "ext"
+            ext.symlink_to(outside)
+            hooks = self.repo / ".git" / "hooks"
+            shutil.rmtree(hooks)
+            hooks.symlink_to(ext / "hooks")
+            snap = repo_guard_snapshot(self.repo)
+            self.assertFalse(any(str(outside) in k for k in snap))
+            self.assertFalse(any(e[0] == "file" and b"external secret" in e[1]
+                                 for e in snap.values()))
+            repo_guard_restore(self.repo, snap)
+            self.assertTrue(ext.is_symlink())
+            self.assertTrue((outside / "hooks" / "secret").exists())
+        finally:
+            shutil.rmtree(outside)
+
     def test_relative_link_outside_the_project_is_left_alone(self):
         # .git/hooks -> ../../external-hooks: the unresolved .. must not
         # pass containment, and the repair must not touch the outside.

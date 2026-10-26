@@ -466,10 +466,17 @@ def _snapshot_entry(p, kind, snap, root):
     target = _norm_target(p, text)
     if target == root or not _inside(target, root):
         return
-    if target.is_symlink():
-        nkind = "dirlink" if target.resolve().is_dir() else "link"
-        _snapshot_entry(target, nkind, snap, root)
-    elif target.is_file():
+    # Validate every component of the target path, not only the last
+    # one. The first symlink component becomes its own guarded entry,
+    # and the descent stops there: deeper guarding flows through that
+    # entry's own recorded target. This also stops the snapshot from
+    # reading external files through a middle link that points outside.
+    link_component = _first_link_component(target, root)
+    if link_component is not None:
+        nkind = "dirlink" if link_component.resolve().is_dir() else "link"
+        _snapshot_entry(link_component, nkind, snap, root)
+        return
+    if target.is_file():
         _snapshot_entry(target, "file", snap, root)
     elif target.is_dir():
         for q, k in _repo_guard_walk(target):
@@ -482,6 +489,17 @@ def _inside(target, root):
         return True
     except ValueError:
         return False
+
+
+def _first_link_component(target, root):
+    """The first component of root-relative `target` that is a symlink,
+    the final component included — or None when the whole path is real."""
+    cur = root
+    for part in target.relative_to(root).parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return cur
+    return None
 
 
 def _lexical_root(path):
@@ -511,32 +529,54 @@ def _entry_matches(p, entry):
     return p.is_symlink() and os.readlink(p) == entry[1]
 
 
-def _remove_entry(p):
+def _real_inside(p, real_root):
+    """The backstop rule: the REAL location must be inside the real
+    project root. It holds even when a lexical analysis is wrong."""
+    rp = os.path.realpath(str(p))
+    return rp == real_root or rp.startswith(real_root + os.sep)
+
+
+def _remove_entry(p, real_root):
+    """Remove a file, link or folder — but never one whose real location
+    is outside the project. Returns True when something was removed."""
+    p = Path(p)
+    if not _real_inside(p.parent, real_root):
+        return False
     if p.is_symlink() or p.is_file():
         p.unlink()
-    elif p.is_dir():
+        return True
+    if p.is_dir():
+        if not _real_inside(p, real_root):
+            return False
         shutil.rmtree(p)
+        return True
+    return False
 
 
-def _restore_entry(p, entry):
-    _remove_entry(p)
+def _restore_entry(p, entry, real_root):
+    """Write a snapshot entry back. Returns False, and changes nothing,
+    when the write would land outside the real project root."""
+    if not _real_inside(Path(p).parent, real_root):
+        return False
+    _remove_entry(p, real_root)
     p.parent.mkdir(parents=True, exist_ok=True)
     if entry[0] == "file":
         p.write_bytes(entry[1])
         os.chmod(p, entry[2])
     else:
         p.symlink_to(entry[1])
+    return True
 
 
-def _ensure_real_chain(p, snap, root, changed):
+def _ensure_real_chain(p, snap, root, real_root, changed):
     """Every folder above a snapshot entry was a real folder at snapshot
     time — a symlinked folder became its own snapshot entry and was never
     descended. So a symlink (or a file) in the chain now is a redirect a
     run planted, and it is replaced with a real folder before any prune
     or write resolves through it. A component that is itself a guarded
-    link stops the repair: its own entry restores it, and the chain
-    continues from its recorded target. Paths with . or .. are never
-    repaired — lexical containment cannot be trusted for them."""
+    link stops the repair: its own entry was restored first, and the
+    chain continues from its recorded target. Paths with . or .. are
+    never repaired — lexical containment cannot be trusted for them."""
     try:
         rel = Path(p).relative_to(root)
     except ValueError:
@@ -549,7 +589,8 @@ def _ensure_real_chain(p, snap, root, changed):
         if str(cur) in snap:
             return
         if cur.is_symlink() or cur.is_file():
-            _remove_entry(cur)
+            if not _remove_entry(cur, real_root):
+                return
             cur.mkdir()
             changed.append(f"{cur} (replaced with a real folder)")
 
@@ -566,37 +607,53 @@ def repo_guard_restore(path, snap):
         base.mkdir()
         changed.append(f"{base} (symlink replaced)")
     root = _lexical_root(path)
-    # Repair the parent chains first: afterwards no path in the snapshot,
-    # and no recorded link target, resolves through a mutable component.
+    real_root = os.path.realpath(str(path))
+
+    # 1. Put the guarded links back first, shallow paths first. Every
+    #    later step then traverses the recorded chain, not a planted one.
+    for fp, entry in sorted(snap.items()):
+        if entry[0] == "file":
+            continue
+        p = Path(fp)
+        _ensure_real_chain(p, snap, root, real_root, changed)
+        if not _entry_matches(p, entry) and _restore_entry(p, entry, real_root):
+            changed.append(fp)
+
+    # 2. Repair the remaining parent chains: afterwards no snapshot path,
+    #    and no recorded link target, resolves through a planted component.
     for fp, entry in snap.items():
-        _ensure_real_chain(Path(fp), snap, root, changed)
-        if entry[0] == "dirlink":
+        if entry[0] == "file":
+            _ensure_real_chain(Path(fp), snap, root, real_root, changed)
+        else:
             target = _norm_target(Path(fp), entry[1])
             if str(target) not in snap and _inside(target, root):
-                _ensure_real_chain(target / "x", snap, root, changed)
+                _ensure_real_chain(target / "x", snap, root, real_root, changed)
+
+    # 3. Remove additions. A linked folder is guarded through its
+    #    recorded target — never the link's current target — and only a
+    #    target whose whole path is real, lexically inside the project
+    #    and really inside it is walked. A target that is, or traverses,
+    #    a guarded link is covered by that link's own entry.
     current = {str(p) for p, _ in _repo_guard_walk(base)}
     for fp, entry in snap.items():
-        # A linked folder is guarded through its target: additions there
-        # must go too. Only the target recorded in the snapshot is walked
-        # — never the link's current target, which a run may have pointed
-        # at a folder the guard does not own — and only inside the
-        # project. A target that is itself a guarded link is covered by
-        # its own entry.
-        if entry[0] == "dirlink":
-            target = _norm_target(Path(fp), entry[1])
-            if str(target) in snap or not _inside(target, root):
-                continue
-            if target.is_dir() and not target.is_symlink():
-                current.update(str(q) for q, _ in _repo_guard_walk(target))
-    # Remove additions first: a swapped folder can hold planted entries,
-    # and they must go before the folder itself is put back.
+        if entry[0] != "dirlink":
+            continue
+        target = _norm_target(Path(fp), entry[1])
+        if (str(target) in snap or not _inside(target, root)
+                or not _real_inside(target, real_root)
+                or _first_link_component(target, root) is not None
+                or not target.is_dir()):
+            continue
+        current.update(str(q) for q, _ in _repo_guard_walk(target))
     for fp in sorted(current - set(snap)):
-        _remove_entry(Path(fp))
-        changed.append(f"{fp} (new entry removed)")
+        if _remove_entry(Path(fp), real_root):
+            changed.append(f"{fp} (new entry removed)")
+
+    # 4. Put the file contents and modes back.
     for fp, entry in snap.items():
         p = Path(fp)
-        if not _entry_matches(p, entry):
-            _restore_entry(p, entry)
+        if entry[0] == "file" and not _entry_matches(p, entry) \
+                and _restore_entry(p, entry, real_root):
             changed.append(fp)
     return changed
 
