@@ -353,22 +353,53 @@ class TestRepoGuard(unittest.TestCase):
         self.assertTrue(config.is_symlink())
         self.assertTrue(hooks.is_symlink())
         self.assertTrue(real.exists())
+        # The guard watches the targets too: tamper the linked config
+        # target and plant a hook in the linked hooks target.
+        original = real.read_bytes()
+        real.write_text(original.decode() + "[core]\n\tfsmonitor = payload\n")
+        planted = hooks_target / "pre-commit"
+        planted.write_text("#!/bin/sh\npayload\n")
+        restored = repo_guard_restore(self.repo, snap)
+        self.assertEqual(len(restored), 2, restored)
+        self.assertEqual(real.read_bytes(), original)
+        self.assertFalse(planted.exists())
+        self.assertTrue(config.is_symlink())
 
 
 class TestSecretGuard(unittest.TestCase):
-    def run_guard(self, file_path):
-        payload = json.dumps({"tool_name": "Read",
-                              "tool_input": {"file_path": file_path}})
+    def run_guard(self, file_path, key="file_path", tool="Read"):
+        payload = json.dumps({"tool_name": tool,
+                              "tool_input": {key: file_path}})
         return subprocess.run([sys.executable,
                                str(ROOT / "scripts" / "secret_guard.py")],
                               input=payload, capture_output=True, text=True)
 
     def test_env_family_is_blocked(self):
         for name in [".env", ".env.test", ".env.prod", ".env.backup",
-                     ".env.anything-at-all"]:
+                     ".ENV.PROD", ".env.anything-at-all"]:
             r = self.run_guard(f"/some/project/{name}")
             self.assertEqual(r.returncode, 2, name)
             self.assertIn("secrets", r.stderr)
+
+    def test_symlink_to_env_is_blocked(self):
+        tmp = Path(tempfile.mkdtemp())
+        try:
+            env = tmp / ".env"
+            env.write_text("SECRET=x\n")
+            link = tmp / "settings.txt"
+            link.symlink_to(env)
+            r = self.run_guard(str(link))
+            self.assertEqual(r.returncode, 2, r.stderr)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_grep_path_and_glob_are_blocked(self):
+        r = self.run_guard("/some/project/.env.prod", key="path", tool="Grep")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        r = self.run_guard(".env*", key="glob", tool="Grep")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        r = self.run_guard("*.py", key="glob", tool="Grep")
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_templates_and_other_files_pass(self):
         for name in [".env.example", ".env.sample", ".env.dist",

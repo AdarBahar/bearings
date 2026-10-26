@@ -436,13 +436,33 @@ def _repo_guard_walk(base):
             yield p, "link" if p.is_symlink() else "file"
 
 
+def _snapshot_entry(p, kind, snap):
+    """Record one guarded entry. A symlink's resolved target is guarded
+    too — a run could change the target instead of the link — so a file
+    target is recorded as a file, and a folder target is walked."""
+    key = str(p)
+    if key in snap:
+        return
+    if kind == "file":
+        snap[key] = ("file", p.read_bytes())
+        return
+    snap[key] = (kind, os.readlink(p))
+    target = p.resolve()
+    if target.is_file():
+        _snapshot_entry(target, "file", snap)
+    elif target.is_dir():
+        for q, k in _repo_guard_walk(target):
+            _snapshot_entry(q, k, snap)
+
+
 def repo_guard_snapshot(path):
     base = Path(path) / ".git"
     if base.is_symlink() or not base.is_dir():
         return {}
-    return {str(p): ("file", p.read_bytes()) if kind == "file"
-            else (kind, os.readlink(p))
-            for p, kind in _repo_guard_walk(base)}
+    snap = {}
+    for p, kind in _repo_guard_walk(base):
+        _snapshot_entry(p, kind, snap)
+    return snap
 
 
 def _entry_matches(p, entry):
@@ -480,10 +500,17 @@ def repo_guard_restore(path, snap):
         base.unlink()
         base.mkdir()
         changed.append(f"{base} (symlink replaced)")
-    current = [str(p) for p, _ in _repo_guard_walk(base)]
+    current = {str(p) for p, _ in _repo_guard_walk(base)}
+    for fp, entry in snap.items():
+        # A linked folder is guarded through its target: additions there
+        # must go too.
+        if entry[0] == "dirlink":
+            target = Path(fp).resolve()
+            if target.is_dir():
+                current.update(str(q) for q, _ in _repo_guard_walk(target))
     # Remove additions first: a swapped folder can hold planted entries,
     # and they must go before the folder itself is put back.
-    for fp in sorted(set(current) - set(snap)):
+    for fp in sorted(current - set(snap)):
         _remove_entry(Path(fp))
         changed.append(f"{fp} (new entry removed)")
     for fp, entry in snap.items():
