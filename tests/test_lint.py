@@ -393,6 +393,31 @@ class TestRepoGuard(unittest.TestCase):
         self.assertFalse((local_hooks / "planted").exists())
         self.assertEqual(os.readlink(hooks), str(local_hooks))
 
+    def test_replaced_target_folder_never_redirects_the_restore(self):
+        # After the snapshot, the run replaces the link's TARGET folder
+        # (local-hooks/) with a symlink to src/. The restore must repair
+        # the chain first, or it deletes src files and writes the hook
+        # into src/.
+        from bearings_sweep import repo_guard_restore, repo_guard_snapshot
+        local_hooks = self.repo / "local-hooks"
+        local_hooks.mkdir()
+        (local_hooks / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+        src = self.repo / "src"
+        src.mkdir()
+        (src / "app.py").write_text("x = 1\n")
+        hooks = self.repo / ".git" / "hooks"
+        shutil.rmtree(hooks)
+        hooks.symlink_to(local_hooks)
+        snap = repo_guard_snapshot(self.repo)
+        shutil.rmtree(local_hooks)
+        local_hooks.symlink_to(src)
+        repo_guard_restore(self.repo, snap)
+        self.assertTrue((src / "app.py").exists())
+        self.assertFalse((src / "pre-commit").exists())
+        self.assertFalse(local_hooks.is_symlink())
+        self.assertEqual((local_hooks / "pre-commit").read_text(),
+                         "#!/bin/sh\nexit 0\n")
+
     def test_preexisting_symlinks_survive_a_noop_run(self):
         # A repo may keep .git/config or .git/hooks as symlinks on purpose.
         # The guard must record and keep that link state.

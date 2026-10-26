@@ -509,6 +509,25 @@ def _restore_entry(p, entry):
         p.symlink_to(entry[1])
 
 
+def _ensure_real_chain(p, root, changed):
+    """Every folder above a snapshot entry was a real folder at snapshot
+    time — symlinked folders were recorded as dirlink entries and never
+    descended. So a symlink (or a file) in the chain now is a redirect a
+    run planted, and it is replaced with a real folder before any prune
+    or write resolves through it."""
+    try:
+        rel = Path(p).relative_to(root)
+    except ValueError:
+        return
+    cur = root
+    for part in rel.parts[:-1]:
+        cur = cur / part
+        if cur.is_symlink() or cur.is_file():
+            _remove_entry(cur)
+            cur.mkdir()
+            changed.append(f"{cur} (replaced with a real folder)")
+
+
 def repo_guard_restore(path, snap):
     """Put the guarded .git entries back as they were — contents and link
     state — and remove entries a run added. Returns the changed paths."""
@@ -521,6 +540,12 @@ def repo_guard_restore(path, snap):
         base.mkdir()
         changed.append(f"{base} (symlink replaced)")
     root = Path(path).resolve()
+    # Repair the parent chains first: afterwards no path in the snapshot,
+    # and no recorded link target, resolves through a mutable component.
+    for fp, entry in snap.items():
+        _ensure_real_chain(Path(fp), root, changed)
+        if entry[0] == "dirlink":
+            _ensure_real_chain(Path(fp).parent / entry[1] / "x", root, changed)
     current = {str(p) for p, _ in _repo_guard_walk(base)}
     for fp, entry in snap.items():
         # A linked folder is guarded through its target: additions there
