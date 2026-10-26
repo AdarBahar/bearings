@@ -16,6 +16,9 @@ class TestGitRo(unittest.TestCase):
     def setUp(self):
         self.repo = Path(tempfile.mkdtemp())
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(["git", "-C", str(self.repo), "-c", "user.email=t@t",
+                        "-c", "user.name=t", "commit", "-q", "--allow-empty",
+                        "-m", "first"], check=True)
 
     def tearDown(self):
         shutil.rmtree(self.repo)
@@ -24,36 +27,50 @@ class TestGitRo(unittest.TestCase):
         return subprocess.run([sys.executable, str(GIT_RO), *args],
                               cwd=self.repo, capture_output=True, text=True)
 
-    def test_status_is_allowed(self):
-        self.assertEqual(self.run_ro("status").returncode, 0)
+    def tags(self):
+        r = subprocess.run(["git", "-C", str(self.repo), "tag", "--list"],
+                           capture_output=True, text=True)
+        return r.stdout.split()
 
-    def test_tag_list_is_allowed(self):
-        self.assertEqual(self.run_ro("tag", "--list").returncode, 0)
+    def test_read_only_forms_are_allowed(self):
+        for args in [("status",), ("tag", "--list"), ("branch", "-a"),
+                     ("log", "--format=%h", "-3"), ("log", "--since=2020-01-01"),
+                     ("rev-parse", "--show-toplevel"), ("ls-files",),
+                     ("remote", "-v"), ("shortlog", "-s", "-n")]:
+            r = self.run_ro(*args)
+            self.assertEqual(r.returncode, 0, (args, r.stderr))
 
     def test_unknown_subcommand_is_blocked(self):
-        for sub in ["show", "grep", "diff", "push", "config"]:
+        for sub in ["show", "grep", "diff", "push", "config", "cat-file"]:
             r = self.run_ro(sub)
             self.assertEqual(r.returncode, 1, sub)
             self.assertIn("not allowed", r.stderr)
 
-    def test_log_output_flag_is_blocked(self):
-        for flag in ["--output=/tmp/x", "--output", "--output-directory=/tmp"]:
-            r = self.run_ro("log", flag)
-            self.assertEqual(r.returncode, 1, flag)
-            self.assertIn("not allowed", r.stderr)
-
-    def test_ref_creation_is_blocked(self):
-        for sub in ["tag", "branch"]:
-            r = self.run_ro(sub, "v1")
-            self.assertEqual(r.returncode, 1, sub)
-            self.assertIn("creates a ref", r.stderr)
-
-    def test_remote_mutation_is_blocked(self):
-        for args in [("remote", "add", "x", "url"), ("remote", "set-url", "x", "url"),
-                     ("remote", "remove", "x"), ("branch", "-D", "x"),
-                     ("tag", "-d", "x")]:
+    def test_unknown_flags_are_blocked(self):
+        # Allowlist semantics: a flag that is not listed never runs — this
+        # covers --output, abbreviations of it, and mutating flags.
+        for args in [("log", "--output=/tmp/x"), ("log", "--outp=/tmp/x"),
+                     ("log", "--output"), ("log", "--ext-diff"),
+                     ("branch", "-D", "x"), ("branch", "--set-upstream-to=x"),
+                     ("branch", "-u", "x"), ("branch", "--edit-description"),
+                     ("tag", "-d", "x"), ("tag", "-a", "x"), ("tag", "-f", "x"),
+                     ("tag", "-F", "/tmp/x"), ("status", "--output=/tmp/x")]:
             r = self.run_ro(*args)
             self.assertEqual(r.returncode, 1, args)
+            self.assertIn("not allowed", r.stderr)
+
+    def test_tag_positional_lists_and_creates_nothing(self):
+        r = self.run_ro("tag", "v1")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.tags(), [])
+
+    def test_remote_mutation_is_blocked(self):
+        for args in [("remote", "add", "x", "url"),
+                     ("remote", "set-url", "x", "url"),
+                     ("remote", "remove", "x"), ("remote", "rename", "x", "y")]:
+            r = self.run_ro(*args)
+            self.assertEqual(r.returncode, 1, args)
+            self.assertIn("not allowed", r.stderr)
 
     def test_no_args_prints_usage(self):
         r = self.run_ro()

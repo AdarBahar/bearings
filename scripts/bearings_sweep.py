@@ -321,6 +321,9 @@ STATIC_DENY = [
     "Read(**/*.pem)", "Read(**/*.key)", "Read(**/*.p12)", "Read(**/*.pfx)",
     "Read(**/id_rsa*)", "Read(**/id_ed25519*)", "Read(**/id_ecdsa*)",
     "Read(**/.ssh/**)", "Read(**/.aws/**)", "Read(**/secrets/**)",
+    # A write to .git/config or .git/hooks turns the next git call into
+    # command execution.
+    "Edit(**/.git/**)", "Write(**/.git/**)",
 ]
 
 def deny_tools(home, vault):
@@ -330,12 +333,42 @@ def deny_tools(home, vault):
     the hook trusts; _Config.md holds refresh_mode and create_new;
     _Dashboard.md holds the approval checkboxes; _templates/ defines the
     note structure that the linter compares against."""
-    guard_paths = [f"{home}/**", f"{BEARINGS_DIR}/**",
+    home, vault = Path(home).resolve(), Path(vault).resolve()
+    guard_paths = [f"{home}/**", f"{BEARINGS_DIR.resolve()}/**",
                    f"{vault}/_Config.md", f"{vault}/_Dashboard.md",
                    f"{vault}/_templates/**"]
     guard = [f"{tool}(//{str(p).lstrip('/')})"
              for p in guard_paths for tool in ("Edit", "Write")]
     return ",".join(STATIC_DENY + guard)
+
+
+# The deny rules above cover the file tools, but they match paths as text.
+# This pair enforces the same guard outside the model: a byte snapshot
+# before the runs, a compare and restore after them.
+
+def guard_snapshot(vault):
+    files = [vault / "_Config.md", vault / "_Dashboard.md"]
+    tdir = vault / "_templates"
+    if tdir.is_dir():
+        files += sorted(p for p in tdir.iterdir() if p.is_file())
+    return {str(p.relative_to(vault)): p.read_bytes() for p in files if p.exists()}
+
+
+def guard_restore(vault, snap):
+    """Put every guarded file back as it was. Returns the restored names."""
+    changed = []
+    for rel, data in snap.items():
+        p = vault / rel
+        if not p.exists() or p.read_bytes() != data:
+            p.write_bytes(data)
+            changed.append(rel)
+    tdir = vault / "_templates"
+    if tdir.is_dir():
+        for p in sorted(tdir.iterdir()):
+            if p.is_file() and str(p.relative_to(vault)) not in snap:
+                p.unlink()
+                changed.append(f"{p.relative_to(vault)} (new file removed)")
+    return changed
 
 
 def bearings_home(env):
@@ -444,6 +477,8 @@ def main():
     seen = set()
     stale = [s for s in stale if not (s[0] in seen or seen.add(s[0]))]
 
+    guard = guard_snapshot(vault)
+
     for name, machine, path, stamp, updated in stale if do_refresh else []:
         good, c, ti, to = run_claude(env, vault, machine, path)
         cost += c; t_in += ti; t_out += to
@@ -458,6 +493,12 @@ def main():
             actions.append(f"created {name}" if good else f"create FAILED {name}")
         elif cfg["create_new"] == "ask":
             pending_out.append(f"- [ ] {name} @{machine['name']} (changed {stamp})")
+
+    if actions:
+        restored = guard_restore(vault, guard)
+        if restored:
+            warnings.append("a run changed guarded files; restored: "
+                            + ", ".join(restored))
 
     # ---- lint (deterministic, zero tokens) ----
     lint_problems = []

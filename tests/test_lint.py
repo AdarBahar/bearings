@@ -230,6 +230,42 @@ class TestDenyRules(unittest.TestCase):
         for sub in ["show", "grep", "diff", "cat-file", "-c", "-C", "config"]:
             self.assertNotIn(sub, SUBCOMMANDS)
 
+    def test_dot_git_is_write_denied(self):
+        rules = self.rules()
+        self.assertIn("Edit(**/.git/**)", rules)
+        self.assertIn("Write(**/.git/**)", rules)
+
+
+class TestGuardFiles(unittest.TestCase):
+    def setUp(self):
+        self.vault = Path(tempfile.mkdtemp())
+        (self.vault / "_Config.md").write_text("config v1\n")
+        (self.vault / "_Dashboard.md").write_text("dash v1\n")
+        (self.vault / "_templates").mkdir()
+        (self.vault / "_templates" / "project.md").write_text("template v1\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.vault)
+
+    def test_restore_undoes_every_change(self):
+        from bearings_sweep import guard_restore, guard_snapshot
+        snap = guard_snapshot(self.vault)
+        (self.vault / "_Config.md").write_text("refresh_mode: auto\n")
+        (self.vault / "_Dashboard.md").unlink()
+        (self.vault / "_templates" / "project.md").write_text("tampered\n")
+        (self.vault / "_templates" / "evil.md").write_text("new\n")
+        restored = guard_restore(self.vault, snap)
+        self.assertEqual(len(restored), 4, restored)
+        self.assertEqual((self.vault / "_Config.md").read_text(), "config v1\n")
+        self.assertEqual((self.vault / "_Dashboard.md").read_text(), "dash v1\n")
+        self.assertEqual((self.vault / "_templates" / "project.md").read_text(),
+                         "template v1\n")
+        self.assertFalse((self.vault / "_templates" / "evil.md").exists())
+
+    def test_untouched_vault_restores_nothing(self):
+        from bearings_sweep import guard_restore, guard_snapshot
+        self.assertEqual(guard_restore(self.vault, guard_snapshot(self.vault)), [])
+
 
 if __name__ == "__main__":
     unittest.main()
