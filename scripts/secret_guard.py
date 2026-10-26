@@ -13,6 +13,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 SAFE = {".env.example", ".env.sample", ".env.dist", ".env.template"}
@@ -20,8 +21,10 @@ SAFE = {".env.example", ".env.sample", ".env.dist", ".env.template"}
 # A plain file name without a leading dot: it can match only itself.
 LITERAL_GLOB = re.compile(r"[a-z0-9][a-z0-9._-]*")
 
-# Folders a scope scan never needs to enter.
-SCAN_PRUNE = {".git", "node_modules", ".venv", "__pycache__"}
+# The scope scan fails closed when it cannot finish well inside the hook
+# timeout. A scope too large to scan is a scope too large to clear.
+SCAN_MAX_ENTRIES = 20000
+SCAN_MAX_SECONDS = 3.0
 
 
 def _name_blocked(name):
@@ -36,16 +39,27 @@ def is_blocked(file_path):
 
 
 def scope_has_env(scope):
-    """True when a non-template .env file exists under the scope. An
-    unknown scope fails closed. The guard reasons about the files that
-    really exist, never about what a glob or type filter might mean, so
-    there is no parser to disagree with."""
+    """True when a non-template .env file exists under the scope, by its
+    own name or as a symlink target. The guard reasons about the files
+    that really exist, never about what a glob or type filter might mean,
+    so there is no parser to disagree with. Nothing is pruned — the
+    search may see folders a pruned scan would have skipped — and an
+    unknown scope or a budget overrun fails closed."""
     if not scope or not Path(str(scope)).is_dir():
         return True
-    for _root, dirs, files in os.walk(str(scope)):
-        dirs[:] = [d for d in dirs if d not in SCAN_PRUNE]
-        if any(_name_blocked(f) for f in files):
+    deadline = time.monotonic() + SCAN_MAX_SECONDS
+    entries = 0
+    for root, dirs, files in os.walk(str(scope)):
+        entries += len(dirs) + len(files)
+        if entries > SCAN_MAX_ENTRIES or time.monotonic() > deadline:
             return True
+        for f in files:
+            if _name_blocked(f):
+                return True
+            p = os.path.join(root, f)
+            if os.path.islink(p) \
+                    and _name_blocked(os.path.basename(os.path.realpath(p))):
+                return True
     return False
 
 

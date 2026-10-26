@@ -472,6 +472,25 @@ class TestSecretGuard(unittest.TestCase):
             r = self.run_guard(tool_input, tool="Grep")
             self.assertEqual(r.returncode, 2, (tool_input, r.stderr))
 
+    def test_scope_scan_sees_symlink_targets_and_budget(self):
+        import secret_guard
+        clean = self.scope / "clean"
+        clean.mkdir()
+        (clean / "main.py").write_text("x = 1\n")
+        self.assertFalse(secret_guard.scope_has_env(clean))
+        # A symlink with a harmless name but a .env target is a .env read.
+        link = clean / "config.txt"
+        link.symlink_to(self.scope / ".env.customer")
+        self.assertTrue(secret_guard.scope_has_env(clean))
+        link.unlink()
+        # A budget overrun fails closed.
+        old = secret_guard.SCAN_MAX_ENTRIES
+        secret_guard.SCAN_MAX_ENTRIES = 0
+        try:
+            self.assertTrue(secret_guard.scope_has_env(clean))
+        finally:
+            secret_guard.SCAN_MAX_ENTRIES = old
+
     def test_grep_literal_glob_and_clean_scope_pass(self):
         # A plain file-name glob matches only itself, never a dotfile.
         r = self.run_guard({"pattern": "x", "glob": "package.json"}, tool="Grep")
