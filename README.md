@@ -31,6 +31,7 @@ The goal: you come back to a project after three months, and in five minutes you
 | `/bearings-doc` | skill | Writes or refreshes the note and the changelog of one project, on this machine or over SSH |
 | `/bearings-ops` | skill | Answers questions about your projects and machines. For questions about the current state, it does live checks first |
 | `scripts/bearings_sweep.py` | script | Finds new and out-of-date projects, writes the dashboard and can start refreshes |
+| `scripts/bearings_lint.py` | script | Checks the notes: required properties, allowed values, links, leftover template text. No AI inside |
 | `scripts/install-schedule.sh` | script | Installs or removes the daily timer (launchd, systemd or cron) |
 
 ## How to use
@@ -61,6 +62,7 @@ claude "/bearings-doc"                        # write or refresh the note of the
 claude "/bearings-ops <question>"             # ask about your projects or machines
 python3 scripts/bearings_sweep.py --report    # find new and out-of-date notes only (no cost)
 python3 scripts/bearings_sweep.py --force     # run a sweep now
+python3 scripts/bearings_lint.py              # check all notes (no cost, no AI)
 scripts/install-schedule.sh --uninstall       # remove the timer
 ```
 
@@ -137,6 +139,8 @@ aliases:                      # one note for a folder with a different name
 ## Security
 
 - **No secret values.** The notes contain the names of the variables and where the files are. `/bearings-doc` does not read `.env` files. The vault syncs to other devices, so treat it as semi-public.
+- **The `.env` rule is enforced, not only requested.** Headless runs get permission deny rules for `.env` files (except `.env.example`), key files, certificates and `secrets/` folders. A prompt instruction alone is a suggestion; these rules are keys.
+- **A linter checks the notes, not the model.** `bearings_lint.py` has no AI inside. It checks required properties, allowed values, links and leftover template text. Each sweep runs it and puts the problems on the dashboard. In headless runs, a hook lints each note directly after the edit, and the model fixes the note in the same run.
 - **No changes to other people's repositories.** A repository that is not in `owners` gets a note in the vault only. Bearings does not change its files.
 - **Actions only on request.** A question gets an answer. An instruction gets an action. Staging and production need your confirmation.
 - **Small permissions for headless runs.** A scheduled run can read and write the vault and use `git` and `ls`. It can use SSH only if you allowed it.
@@ -149,7 +153,10 @@ skills/bearings-setup/       setup and settings
 skills/bearings-doc/         project scan → note and changelog (local and SSH)
 skills/bearings-ops/         questions, live checks, actions with confirmation
 scripts/bearings_sweep.py    discovery, out-of-date check, approvals, dashboard, cost
+scripts/bearings_lint.py     deterministic note checks (properties, values, links, template text)
+scripts/lint_hook.py         PostToolUse hook: lints a note after each headless edit
 scripts/install-schedule.sh  daily timer: launchd (macOS), systemd user timer (Linux), or cron
+config/headless-settings.json  hook configuration for headless runs (the sweep passes it with --settings)
 templates/                   _Config.md, _Dashboard.md, _Deployments.base and the note templates
 assets/                      architecture diagram (light and dark)
 install.sh                   links the skills into ~/.claude/skills

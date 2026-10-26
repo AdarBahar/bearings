@@ -50,7 +50,8 @@ A deployment is an instance that runs without a person at the keyboard: a server
 8. **Index** — add/update this project's row in `<vault>/_Index.md` (link, status, ownership, stack, deployments as `env@host` from the deployment notes that are not retired, updated date). Keep rows alphabetized. (When invoked by the sweep for many projects, still update your own row only.)
 9. **Backlinks (owned local repos only):** ensure the repo's agent context files end with a pointer line to the vault note — `CLAUDE.md` always (create a minimal one if none exists), and `AGENTS.md` too **if it already exists** (never create AGENTS.md just for this). This makes the knowledge base discoverable by both Claude Code and Codex/other agents that read AGENTS.md. Leave changes uncommitted. Skip for external repos and remote (`ssh=`) projects.
 10. **Live checks:** while connected to a remote machine, check this project's deployments there (`docker ps`, `systemctl --user …`, `pm2 ls`). Update those deployment notes and their `verified`. Machine notes embed the deployment view; do not add deployment rows to them.
-11. **Report:** the paths written, the deployment notes made or retired, the archive entries added, and what's marked unknown.
+11. **Lint:** run `python3 "$BEARINGS_HOME/scripts/bearings_lint.py" <paths of the notes you wrote>` (`BEARINGS_HOME` is in `~/.bearings/bearings.env`). Fix each reported problem, then run it again until it is clean. In a headless sweep run a hook runs this check after each edit; if you cannot run Bash commands beyond git/ls, skip this step and rely on the hook.
+12. **Report:** the paths written, the deployment notes made or retired, the archive entries added, lint problems you could not fix, and what's marked unknown.
 
 ## Style
 

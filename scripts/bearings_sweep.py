@@ -308,16 +308,38 @@ def read_pending_approvals(dash_text):
 
 # ---------- claude runs (refresh / create) ----------
 
+# Deny rules for the headless runs. The skill prompt also says "never read
+# .env files", but a prompt is a suggestion; these rules are enforced.
+# .env.example stays readable — the skill uses it for the variable names.
+DENY_TOOLS = ",".join([
+    "Read(**/.env)", "Edit(**/.env)", "Edit(**/.env.*)",
+    "Read(**/.env.local)", "Read(**/.env.*.local)",
+    "Read(**/.env.production)", "Read(**/.env.development)", "Read(**/.env.staging)",
+    "Read(**/*.pem)", "Read(**/*.key)", "Read(**/id_rsa*)", "Read(**/secrets/**)",
+])
+
+
+def bearings_home(env):
+    return Path(env.get("BEARINGS_HOME") or Path(__file__).resolve().parent.parent)
+
+
 def run_claude(env, vault, machine, path):
     claude = env.get("BEARINGS_CLAUDE_BIN", "claude")
     target = path if machine["ssh"] is None else f"ssh={machine['ssh']}:{path}"
     tools = "Read,Glob,Grep,Write,Edit,Bash(git:*),Bash(ls:*)"
     if machine["ssh"] and env.get("BEARINGS_ALLOW_SSH") == "1":
         tools += ",Bash(ssh:*)"
-    r = run([claude, "-p", f"/bearings-doc {target}", "--output-format", "json",
-             "--add-dir", str(vault), "--permission-mode", "acceptEdits",
-             "--allowedTools", tools],
-            cwd=path if machine["ssh"] is None else str(Path.home()), timeout=900)
+    home = bearings_home(env)
+    cmd = [claude, "-p", f"/bearings-doc {target}", "--output-format", "json",
+           "--add-dir", str(vault), "--permission-mode", "acceptEdits",
+           "--allowedTools", tools, "--disallowedTools", DENY_TOOLS]
+    settings = home / "config" / "headless-settings.json"
+    if settings.exists():
+        cmd += ["--settings", str(settings)]
+    run_env = {**os.environ, "BEARINGS_HOME": str(home),
+               "BEARINGS_VAULT_DIR": str(vault)}
+    r = run(cmd, cwd=path if machine["ssh"] is None else str(Path.home()),
+            timeout=900, env=run_env)
     cost = tokens_in = tokens_out = 0
     try:
         j = json.loads(r.stdout)
@@ -415,6 +437,20 @@ def main():
         elif cfg["create_new"] == "ask":
             pending_out.append(f"- [ ] {name} @{machine['name']} (changed {stamp})")
 
+    # ---- lint (deterministic, zero tokens) ----
+    lint_problems = []
+    try:
+        import bearings_lint
+        os.environ.setdefault("BEARINGS_HOME", str(bearings_home(env)))
+        lint_problems = bearings_lint.lint_vault(vault)
+    except Exception as e:  # the lint must never break the sweep
+        warnings.append(f"lint did not run: {e}")
+    if lint_problems:
+        warnings.extend(f"lint: {p}" for p in lint_problems[:8])
+        if len(lint_problems) > 8:
+            warnings.append(f"lint: {len(lint_problems) - 8} more — "
+                            "run scripts/bearings_lint.py")
+
     # ---- dashboard ----
     month_key = today.strftime("%Y-%m")
     months = state.setdefault("months", {})
@@ -453,8 +489,10 @@ def main():
     save_state(state)
 
     print(f"bearings sweep: {len(new)} new, {len(stale)} stale, {ok} up-to-date, "
-          f"${cost:.2f} spent"
+          f"{len(lint_problems)} lint problem(s), ${cost:.2f} spent"
           + (f", unreachable: {','.join(unreachable)}" if unreachable else ""))
+    for p in lint_problems:
+        print(f"  LINT  {p}")
     for name, machine, path, stamp in new:
         print(f"  NEW   {name} @{machine['name']} (changed {stamp})")
     for name, machine, path, stamp, updated in stale:
