@@ -1,6 +1,7 @@
 ---
 name: bearings-doc
 description: Generate or refresh the Bearings notes for a project. Scans the repo (locally or over SSH) and writes the project note (current state), one note per running deployment, the changelog and the archive into the Bearings vault folder.
+disable-model-invocation: true
 ---
 
 # bearings-doc: generate/refresh the notes of a project
