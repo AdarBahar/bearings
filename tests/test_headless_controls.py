@@ -92,8 +92,11 @@ class TestSkillsCanary(unittest.TestCase):
 
         with mock.patch.object(bearings_sweep, "run", recorder):
             ok, *_ = skills_canary({})
+            skills_canary({}, "claude-haiku-5-5")
         self.assertTrue(ok)
         self.assertIn("/bearings-doc --canary", calls[0])
+        self.assertNotIn("--model", calls[0])
+        self.assertIn("--model", calls[1])
 
     def test_token_passes_and_cost_is_reported(self):
         out = json.dumps({"result": "BEARINGS-DOC-LOADED",

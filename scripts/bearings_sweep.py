@@ -679,7 +679,7 @@ def parse_claude_json(stdout):
         return 0, 0, 0, ""
 
 
-def skills_canary(env):
+def skills_canary(env, model=""):
     """One cheap headless run that invokes /bearings-doc with --canary.
     The loaded skill answers with a fixed token; in bare mode (a possible
     future default for -p) the slash command resolves to nothing and the
@@ -688,9 +688,12 @@ def skills_canary(env):
     view, while a -p invocation still works. Returns (ok, cost,
     tokens in, tokens out)."""
     claude = env.get("BEARINGS_CLAUDE_BIN", "claude")
+    cmd = [claude, "-p", "/bearings-doc --canary",
+           "--output-format", "json", "--allowedTools", ""]
+    if model:
+        cmd += ["--model", model]
     try:
-        r = run([claude, "-p", "/bearings-doc --canary",
-                 "--output-format", "json", "--allowedTools", ""], timeout=300)
+        r = run(cmd, timeout=300)
     except subprocess.TimeoutExpired:
         return False, 0, 0, 0
     cost, t_in, t_out, result = parse_claude_json(r.stdout)
@@ -817,7 +820,7 @@ def main():
                and (cfg["create_new"] == "auto" or (n[0], n[1]["name"]) in approved)]
     canary_ok = True
     if (do_refresh and stale) or creates:
-        canary_ok, c, ti, to = skills_canary(env)
+        canary_ok, c, ti, to = skills_canary(env, model)
         cost += c; t_in += ti; t_out += to
         if not canary_ok:
             warnings.append("canary FAILED — headless runs do not load the "
