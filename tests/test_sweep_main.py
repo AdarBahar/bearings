@@ -98,6 +98,26 @@ class TestMainWiring(unittest.TestCase):
         self.assertIn("**Today:** 2 runs · $0.06", self.dash())
         self.assertIn("| claude-haiku-5-5 | 2 | $0.06 |", self.dash())
 
+    def test_budget_stop_skips_all_runs_and_keeps_the_approval(self):
+        import json
+        from datetime import date
+        (self.vault / "_Config.md").write_text(
+            (self.vault / "_Config.md").read_text().replace(
+                "model: claude-haiku-5-5",
+                "model: claude-haiku-5-5\nbudget_stop_usd: 5"))
+        month = date.today().strftime("%Y-%m")
+        (self.tmp / ".bearings" / "state.json").write_text(json.dumps(
+            {"months": {month: {"runs": 1, "cost": 6.0,
+                                "t_in": 10, "t_out": 1}}}))
+        with mock.patch.object(bearings_sweep, "skills_canary") as canary, \
+             mock.patch.object(bearings_sweep, "run_claude") as run_claude:
+            self.assertEqual(bearings_sweep.main(), 0)
+        canary.assert_not_called()
+        run_claude.assert_not_called()
+        self.assertIn("budget stop", self.dash())
+        self.assertIn("- [x] app @mac", self.dash())
+        self.assertIn("stop at $5", self.dash())
+
     def test_report_only_never_calls_the_canary(self):
         with mock.patch.object(sys, "argv",
                                ["bearings_sweep.py", "--force", "--report"]), \

@@ -100,7 +100,7 @@ Bearings/
 - **Changelog:** a summary of the Git history. Each refresh adds the new changes.
 - **Archive:** the history of the notes. Before Bearings replaces a fact, it copies the old text here with the date and the reason.
 - **Machine note:** the facts of one machine. It shows the deployments on the machine from the Base. Hosts that are not your machines also get a machine note: `Stores` (app store listings), `GitHub` (Pages and scheduled Actions) and `Testing` (services on servers that are not yours).
-- **Dashboard:** the result of each sweep. New projects show as checkboxes. Tick one to approve its note. A Costs section counts the runs and the spend for today, the last 7 days and this month, with a per-day table for the last week, a per-model table for the last 30 days, and the monthly history. The model table uses the CLI's own per-model usage, so subagent models count correctly.
+- **Dashboard:** the result of each sweep. New projects show as checkboxes. Tick one to approve its note. A Costs section counts the runs and the spend for today, the last 7 days and this month, with a per-day table for the last week, a per-model table for the last 30 days, and the monthly history. The model table uses the CLI's own per-model usage, so subagent models count correctly. The tables split fresh input tokens from prompt-cache reads, because a cache read costs about a tenth of a fresh input token.
 - **Group:** you can put related projects one level down under a parent project, for example `my-app/api/api.md`. Bearings finds them there.
 
 The notes help you find your way. They do not replace the documentation in the repository.
@@ -116,6 +116,9 @@ refresh_mode: report-only     # report-only | auto
 create_new: ask               # ask | auto | never
 model:                        # model for headless runs (empty = CLI default)
 budget_alert_usd: 0           # monthly cost warning (0 = off)
+budget_stop_usd: 0            # monthly hard cap: skip paid runs above this (0 = off)
+notify: off                   # email after a sweep: off | on-action | always
+notify_email:                 # where the sweep email goes
 
 machines:
   - "mac | local | ~/Code"
@@ -136,6 +139,8 @@ aliases:                      # one note for a folder with a different name
 - **`model`:** the model for the headless runs, for example a small model such as `claude-haiku-5-5`. A note refresh is mechanical work, so a smaller model cuts the cost. Empty uses the CLI default.
 - **Skill canary:** before the first run of a sweep, one short run of `/bearings-doc --canary` (on the configured `model`) proves that headless runs load the skill. The loaded skill answers with a fixed token. If a future Claude Code release makes bare mode the default for `-p`, the token never appears: the sweep then skips its runs, keeps dashboard approvals as checked boxes, and puts a loud warning on the dashboard instead of silently refreshing nothing.
 - **`create_new`:** what to do with a new project. `ask` puts a checkbox on the dashboard. `auto` writes the note immediately. `never` ignores it.
+- **`budget_stop_usd`:** a hard cap, while `budget_alert_usd` only warns. When the month's spend reaches the cap, the sweep skips every refresh and creation until the next month. Approvals stay checked on the dashboard and run later. The free parts (scan, report, lint) continue.
+- **`notify` / `notify_email`:** an email report after a sweep. `on-action` sends one only when the sweep spent usage or hit the budget stop. `always` sends one after every executed sweep. The SMTP settings are machine-local in `~/.bearings/bearings.env`: `BEARINGS_SMTP_HOST`, `BEARINGS_SMTP_PORT` (default 587; 465 uses SSL), `BEARINGS_SMTP_USER`, `BEARINGS_SMTP_PASS`, `BEARINGS_SMTP_FROM` (default: the user). A notification failure becomes a dashboard warning; it never breaks the sweep.
 - **Folders without Git:** Bearings tracks them only if an include pattern names them, or if they already have a note.
 - **Remote machines:** each sweep finds the projects over SSH. A headless Claude run can use SSH only if you allow it during the setup. This setting is in `~/.bearings/bearings.env`.
 

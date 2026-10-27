@@ -147,11 +147,20 @@ def load_config(vault):
     model = fm.get("model", "")
     cfg["model"] = model.strip() if isinstance(model, str) else ""
 
-    try:
-        cfg["budget_alert_usd"] = float(fm.get("budget_alert_usd", 0) or 0)
-    except ValueError:
-        errors.append(f"budget_alert_usd {fm.get('budget_alert_usd')!r} is not a number")
-        cfg["budget_alert_usd"] = 0
+    for key in ("budget_alert_usd", "budget_stop_usd"):
+        try:
+            cfg[key] = float(fm.get(key, 0) or 0)
+        except ValueError:
+            errors.append(f"{key} {fm.get(key)!r} is not a number")
+            cfg[key] = 0
+
+    notify = str(fm.get("notify", "off") or "off").lower()
+    if notify not in {"off", "on-action", "always"}:
+        errors.append(f"notify {notify!r} — use off, on-action, or always")
+        notify = "off"
+    cfg["notify"] = notify
+    email = fm.get("notify_email", "")
+    cfg["notify_email"] = email.strip() if isinstance(email, str) else ""
 
     def as_list(key):
         v = fm.get(key, [])
@@ -680,7 +689,8 @@ def record_runs(state, today, kind, name, models):
         runs.append({"id": call_id, "d": today.isoformat(), "kind": kind,
                      "name": name, "model": m,
                      "cost": round(float(u["cost"]), 6),
-                     "in": int(u["in"]), "out": int(u["out"])})
+                     "in": int(u["in"]), "cache": int(u.get("cache", 0)),
+                     "out": int(u["out"])})
 
 
 def prune_runs(state, today):
@@ -691,11 +701,14 @@ def prune_runs(state, today):
 
 def _agg(records):
     # Older records have no id; they fall back to the (day, kind, name)
-    # triple.
+    # triple. Older records also have no "cache" field (cache reads were
+    # folded into "in"); they count as zero cache reads.
     runs = len({r.get("id") or (r["d"], r["kind"], r["name"])
                 for r in records})
     return (runs, sum(r["cost"] for r in records),
-            sum(r["in"] for r in records), sum(r["out"] for r in records))
+            sum(r["in"] for r in records),
+            sum(r.get("cache", 0) for r in records),
+            sum(r["out"] for r in records))
 
 
 def cost_block(state, today):
@@ -713,12 +726,12 @@ def cost_block(state, today):
 
     day_rows = []
     for d in days7:
-        n, c, ti, to = _agg([r for r in runs if r["d"] == d])
+        n, c, ti, tc, to = _agg([r for r in runs if r["d"] == d])
         if n:
-            day_rows.append(f"| {d} | {n} | ${c:.2f} | {ti:,} | {to:,} |")
+            day_rows.append(f"| {d} | {n} | ${c:.2f} | {ti:,} | {tc:,} | {to:,} |")
     if day_rows:
-        out += ["| Day | Runs | Cost | Tokens in | Tokens out |",
-                "|---|---|---|---|---|"] + day_rows + [""]
+        out += ["| Day | Runs | Cost | Fresh in | Cache in | Out |",
+                "|---|---|---|---|---|---|"] + day_rows + [""]
 
     cutoff30 = (today - timedelta(days=30)).isoformat()
     by_model = {}
@@ -727,13 +740,14 @@ def cost_block(state, today):
             by_model.setdefault(r["model"], []).append(r)
     if by_model:
         out += ["**Per model, last 30 days** (all runs go through the "
-                "Claude CLI; the model is the vendor breakdown):", "",
-                "| Model | Runs | Cost | Tokens in | Tokens out |",
-                "|---|---|---|---|---|"]
+                "Claude CLI; the model is the vendor breakdown; a cache "
+                "read costs about a tenth of a fresh input token):", "",
+                "| Model | Runs | Cost | Fresh in | Cache in | Out |",
+                "|---|---|---|---|---|---|"]
         for name, rs in sorted(by_model.items(),
                                key=lambda kv: -sum(r["cost"] for r in kv[1])):
-            n, c, ti, to = _agg(rs)
-            out.append(f"| {name} | {n} | ${c:.2f} | {ti:,} | {to:,} |")
+            n, c, ti, tc, to = _agg(rs)
+            out.append(f"| {name} | {n} | ${c:.2f} | {ti:,} | {tc:,} | {to:,} |")
         out.append("")
 
     months = state.get("months", {})
@@ -748,6 +762,115 @@ def cost_block(state, today):
     return "\n".join(out).rstrip()
 
 
+# ---------- email notification ----------
+
+def smtp_settings(env):
+    """SMTP settings from bearings.env, or None when incomplete. The
+    credentials stay machine-local; the vault never sees them."""
+    host = env.get("BEARINGS_SMTP_HOST", "")
+    user = env.get("BEARINGS_SMTP_USER", "")
+    password = env.get("BEARINGS_SMTP_PASS", "")
+    if not (host and user and password):
+        return None
+    try:
+        port = int(env.get("BEARINGS_SMTP_PORT", "") or 587)
+    except ValueError:
+        port = 587
+    return {"host": host, "port": port, "user": user, "pass": password,
+            "from": env.get("BEARINGS_SMTP_FROM", "") or user}
+
+
+def should_notify(notify, actions, budget_stopped, cost=0.0):
+    """'always' sends after every executed sweep. 'on-action' sends when
+    the sweep spent usage or hit the budget stop. The cost covers paid
+    work without an action line, such as a failed canary."""
+    if notify == "always":
+        return True
+    if notify == "on-action":
+        return bool(actions) or budget_stopped or cost > 0
+    return False
+
+
+def build_notification(today, last, month_line, warnings, budget_stopped,
+                       budget_stop, actions):
+    """(subject, body) for the sweep email. Plain text."""
+    if budget_stopped:
+        subject = f"bearings: budget stop reached — sweep ran no refreshes ({today})"
+    elif any("FAILED" in a for a in actions):
+        subject = f"bearings sweep {today}: {len(actions)} action(s), some FAILED"
+    elif any(w.startswith("canary FAILED") for w in warnings):
+        subject = f"bearings sweep {today}: canary FAILED, runs skipped"
+    else:
+        subject = f"bearings sweep {today}: {len(actions)} action(s)"
+    body = ["Bearings sweep report", "", last, "", month_line]
+    if budget_stopped:
+        body += ["",
+                 f"The month cost reached budget_stop_usd (${budget_stop:.2f}).",
+                 "The sweep skipped all refreshes and creations.",
+                 "What to do:",
+                 "  - Raise or remove budget_stop_usd in _Config.md to let runs continue.",
+                 "  - Or do nothing; runs continue in the next month.",
+                 "Approved new projects stay checked in _Dashboard.md and run later."]
+    if warnings:
+        body += ["", "Warnings:"] + [f"  - {w}" for w in warnings]
+    body += ["", "Details: _Dashboard.md in the vault."]
+    return subject, "\n".join(body)
+
+
+def send_email(settings, to, subject, body):
+    """Send one plain-text email. Raises on failure; the caller catches."""
+    import smtplib
+    import ssl
+    from email.message import EmailMessage
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = settings["from"]
+    msg["To"] = to
+    msg.set_content(body)
+    # An explicit context verifies the server certificate on every
+    # Python version; the credentials never travel unverified.
+    ctx = ssl.create_default_context()
+    if settings["port"] == 465:
+        with smtplib.SMTP_SSL(settings["host"], settings["port"],
+                              context=ctx, timeout=30) as s:
+            s.login(settings["user"], settings["pass"])
+            s.send_message(msg)
+    else:
+        with smtplib.SMTP(settings["host"], settings["port"], timeout=30) as s:
+            s.ehlo()
+            s.starttls(context=ctx)
+            s.ehlo()
+            s.login(settings["user"], settings["pass"])
+            s.send_message(msg)
+
+
+def notify_sweep(env, cfg, warnings, today, last, month_line,
+                 budget_stopped, actions, cost=0.0):
+    """Send the sweep email when the notify settings ask for one. A
+    notification failure becomes a warning; it never breaks the sweep."""
+    notify = cfg.get("notify", "off")
+    to = cfg.get("notify_email", "")
+    if notify == "off" or not should_notify(notify, actions, budget_stopped,
+                                            cost):
+        return
+    if not to:
+        warnings.append("notify is on but notify_email is empty in _Config.md")
+        return
+    settings = smtp_settings(env)
+    if settings is None:
+        warnings.append("notify is on but SMTP settings are missing in "
+                        "bearings.env (BEARINGS_SMTP_HOST, BEARINGS_SMTP_USER, "
+                        "BEARINGS_SMTP_PASS)")
+        return
+    subject, body = build_notification(today, last, month_line, warnings,
+                                       budget_stopped,
+                                       cfg.get("budget_stop_usd", 0), actions)
+    try:
+        send_email(settings, to, subject, body)
+    except Exception as e:
+        warnings.append(f"notification email failed: {e}")
+
+
 def bearings_home(env):
     return Path(env.get("BEARINGS_HOME") or Path(__file__).resolve().parent.parent)
 
@@ -757,7 +880,11 @@ def parse_claude_json(stdout):
     claude -p JSON reply; zeros, an empty string and an empty dict when
     the output is not JSON. Per-model usage comes from the CLI's own
     modelUsage report, so subagent models count correctly:
-    {model: {"cost": float, "in": int, "out": int}}."""
+    {model: {"cost": float, "in": int, "cache": int, "out": int}}.
+    "in" counts fresh input tokens only; "cache" counts prompt-cache
+    reads, which cost about a tenth of a fresh input token. When the
+    reply has usage but no modelUsage, the split totals land under the
+    empty model name; the caller renames that key (_name_fallback)."""
     try:
         j = json.loads(stdout)
     except (json.JSONDecodeError, ValueError):
@@ -775,10 +902,23 @@ def parse_claude_json(stdout):
             continue
         models[str(name)] = {
             "cost": float(u.get("costUSD") or u.get("cost_usd") or 0),
-            "in": int(u.get("inputTokens") or 0) + int(u.get("cacheReadInputTokens") or 0),
+            "in": int(u.get("inputTokens") or 0),
+            "cache": int(u.get("cacheReadInputTokens") or 0),
             "out": int(u.get("outputTokens") or 0),
         }
+    if not models and (cost or t_in or t_out):
+        models = {"": {"cost": cost,
+                       "in": int(usage.get("input_tokens") or 0),
+                       "cache": int(usage.get("cache_read_input_tokens") or 0),
+                       "out": t_out}}
     return cost, t_in, t_out, str(j.get("result") or ""), models
+
+
+def _name_fallback(models, model):
+    """The parse fallback record has no model name; the caller knows it."""
+    if "" in models:
+        models[model or "default"] = models.pop("")
+    return models
 
 
 def skills_canary(env, model=""):
@@ -799,10 +939,8 @@ def skills_canary(env, model=""):
     except subprocess.TimeoutExpired:
         return False, 0, 0, 0, {}
     cost, t_in, t_out, result, models = parse_claude_json(r.stdout)
-    if not models and (cost or t_in or t_out):
-        models = {model or "default": {"cost": cost, "in": t_in, "out": t_out}}
     return (r.returncode == 0 and "BEARINGS-DOC-LOADED" in result.upper(),
-            cost, t_in, t_out, models)
+            cost, t_in, t_out, _name_fallback(models, model))
 
 
 def run_claude(env, vault, machine, path, warnings, model=""):
@@ -841,10 +979,8 @@ def run_claude(env, vault, machine, path, warnings, model=""):
     if r is None:
         return False, 0, 0, 0, {}
     cost, tokens_in, tokens_out, _, models = parse_claude_json(r.stdout)
-    if not models and (cost or tokens_in or tokens_out):
-        models = {model or "default": {"cost": cost, "in": tokens_in,
-                                       "out": tokens_out}}
-    return r.returncode == 0, cost, tokens_in, tokens_out, models
+    return (r.returncode == 0, cost, tokens_in, tokens_out,
+            _name_fallback(models, model))
 
 
 # ---------- main ----------
@@ -925,8 +1061,25 @@ def main():
     creates = [n for n in new
                if not report_only
                and (cfg["create_new"] == "auto" or (n[0], n[1]["name"]) in approved)]
+
+    # Budget stop: a hard cap, unlike budget_alert_usd, which only warns.
+    # When the month's spend reaches it, the sweep skips every paid run.
+    stop = float(cfg.get("budget_stop_usd", 0) or 0)
+    month_key = today.strftime("%Y-%m")
+    spent_before = float(state.get("months", {}).get(month_key, {}).get("cost", 0.0))
+    budget_stopped = False
+
+    def over_stop():
+        return bool(stop) and spent_before + cost >= stop
+
+    if ((do_refresh and stale) or creates) and over_stop():
+        budget_stopped = True
+        warnings.append(f"budget stop — this month's cost (${spent_before:.2f}) "
+                        f"reached budget_stop_usd (${stop:.2f}); refreshes and "
+                        "creations skipped this sweep")
+
     canary_ok = True
-    if (do_refresh and stale) or creates:
+    if not budget_stopped and ((do_refresh and stale) or creates):
         canary_ok, c, ti, to, models = skills_canary(env, model)
         cost += c; t_in += ti; t_out += to
         record_runs(state, today, "canary", "-", models)
@@ -939,7 +1092,14 @@ def main():
     pending_out = []
     attempted = False
     try:
-        for name, machine, path, stamp, updated in stale if do_refresh and canary_ok else []:
+        for name, machine, path, stamp, updated in (
+                stale if do_refresh and canary_ok and not budget_stopped else []):
+            if over_stop():
+                budget_stopped = True
+                warnings.append(f"budget stop — month cost reached "
+                                f"budget_stop_usd (${stop:.2f}) mid-sweep; "
+                                "remaining runs skipped")
+                break
             attempted = True
             good, c, ti, to, models = run_claude(env, vault, machine, path, warnings, model)
             cost += c; t_in += ti; t_out += to
@@ -948,14 +1108,21 @@ def main():
 
         for name, machine, path, stamp in new:
             approve = cfg["create_new"] == "auto" or (name, machine["name"]) in approved
-            if approve and not report_only and canary_ok:
+            if (approve and not report_only and canary_ok
+                    and not budget_stopped and over_stop()):
+                budget_stopped = True
+                warnings.append(f"budget stop — month cost reached "
+                                f"budget_stop_usd (${stop:.2f}) mid-sweep; "
+                                "remaining runs skipped")
+            if approve and not report_only and canary_ok and not budget_stopped:
                 attempted = True
                 good, c, ti, to, models = run_claude(env, vault, machine, path, warnings, model)
                 cost += c; t_in += ti; t_out += to
                 record_runs(state, today, "create", name, models)
                 actions.append(f"created {name}" if good else f"create FAILED {name}")
             elif approve and not report_only:
-                # The canary failed: keep the approval, as a checked box.
+                # The canary failed or the budget stop hit: keep the
+                # approval, as a checked box.
                 pending_out.append(f"- [x] {name} @{machine['name']} (changed {stamp})")
             elif cfg["create_new"] == "ask":
                 pending_out.append(f"- [ ] {name} @{machine['name']} (changed {stamp})")
@@ -983,12 +1150,10 @@ def main():
                             "run scripts/bearings_lint.py")
 
     # ---- dashboard ----
-    month_key = today.strftime("%Y-%m")
     months = state.setdefault("months", {})
     mo = months.setdefault(month_key, {"runs": 0, "cost": 0.0, "t_in": 0, "t_out": 0})
     mo["runs"] += 1; mo["cost"] += cost; mo["t_in"] += int(t_in); mo["t_out"] += int(t_out)
 
-    warn_block = "\n".join(f"> [!warning] {w}" for w in warnings) if warnings else "_none_"
     dur = int((datetime.now() - start_time).total_seconds())
     last = (f"**{today} {datetime.now().strftime('%H:%M')}** — "
             f"{len(new)} new · {len(stale)} stale · {ok} up-to-date"
@@ -998,8 +1163,15 @@ def main():
     budget = cfg["budget_alert_usd"]
     month_line = (f"**{month_key}**: {mo['runs']} runs · ${mo['cost']:.2f}"
                   + (f" / budget ${budget:.0f} {'⚠️ OVER' if budget and mo['cost'] > budget else '✓'}" if budget else "")
+                  + (f" · stop at ${stop:.0f}" if stop else "")
                   + f" · {mo['t_in']:,} in / {mo['t_out']:,} out")
     pending_block = "\n".join(pending_out) if pending_out else "_none — new projects appear here for approval when `create_new: ask`_"
+
+    # The email goes out before the warnings block renders, so a notify
+    # failure still shows on the dashboard.
+    notify_sweep(env, cfg, warnings, today, last, month_line,
+                 budget_stopped, actions, cost)
+    warn_block = "\n".join(f"> [!warning] {w}" for w in warnings) if warnings else "_none_"
 
     prune_runs(state, today)
     dash_text = replace_section(dash_text, "warn", warn_block)
