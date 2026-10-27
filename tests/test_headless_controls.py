@@ -42,8 +42,8 @@ class TestModelSetting(unittest.TestCase):
             shutil.rmtree(vault)
 
     def test_model_is_parsed_and_defaults_to_empty(self):
-        self.assertEqual(self.load("model: claude-haiku-4-5")["model"],
-                         "claude-haiku-4-5")
+        self.assertEqual(self.load("model: claude-haiku-5-5")["model"],
+                         "claude-haiku-5-5")
         self.assertEqual(self.load("model:")["model"], "")
 
     def test_run_claude_passes_the_model_flag(self):
@@ -58,10 +58,10 @@ class TestModelSetting(unittest.TestCase):
         try:
             with mock.patch.object(bearings_sweep, "run", recorder):
                 bearings_sweep.run_claude({}, repo, machine, str(repo), [],
-                                          "claude-haiku-4-5")
+                                          "claude-haiku-5-5")
                 bearings_sweep.run_claude({}, repo, machine, str(repo), [])
             self.assertIn("--model", calls[0])
-            self.assertIn("claude-haiku-4-5", calls[0])
+            self.assertIn("claude-haiku-5-5", calls[0])
             self.assertNotIn("--model", calls[1])
         finally:
             shutil.rmtree(repo)
