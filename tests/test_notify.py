@@ -80,6 +80,11 @@ class TestShouldNotify(unittest.TestCase):
         self.assertTrue(should_notify("on-action", [], True))
         self.assertFalse(should_notify("on-action", [], False))
 
+    def test_paid_work_without_actions_notifies(self):
+        # A failed canary spends money but adds no action line.
+        self.assertTrue(should_notify("on-action", [], False, cost=0.01))
+        self.assertFalse(should_notify("on-action", [], False, cost=0.0))
+
 
 class TestBuildNotification(unittest.TestCase):
     def test_normal_sweep_email(self):
@@ -103,6 +108,14 @@ class TestBuildNotification(unittest.TestCase):
         subject, _ = build_notification(
             TODAY, "last", "month", [], False, 0, ["refresh FAILED app"])
         self.assertIn("FAILED", subject)
+
+    def test_failed_canary_shows_in_the_subject(self):
+        subject, body = build_notification(
+            TODAY, "last", "month",
+            ["canary FAILED — headless runs do not load the skill"],
+            False, 0, [])
+        self.assertIn("canary FAILED", subject)
+        self.assertIn("canary FAILED", body)
 
 
 class TestNotifySweep(unittest.TestCase):
@@ -150,6 +163,14 @@ class TestNotifySweep(unittest.TestCase):
             notify_sweep(SMTP_ENV, self.cfg(), [], TODAY,
                          "last", "month", False, [])
         send.assert_not_called()
+
+    def test_paid_canary_failure_sends_an_email(self):
+        with mock.patch.object(bearings_sweep, "send_email") as send:
+            notify_sweep(SMTP_ENV, self.cfg(),
+                         ["canary FAILED — bare mode?"], TODAY,
+                         "last", "month", False, [], cost=0.01)
+        send.assert_called_once()
+        self.assertIn("canary FAILED", send.call_args[0][2])
 
 
 if __name__ == "__main__":

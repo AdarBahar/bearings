@@ -101,12 +101,16 @@ class TestSkillsCanary(unittest.TestCase):
     def test_token_passes_and_cost_is_reported(self):
         out = json.dumps({"result": "BEARINGS-DOC-LOADED",
                           "total_cost_usd": 0.01,
-                          "usage": {"input_tokens": 100, "output_tokens": 5}})
+                          "usage": {"input_tokens": 100,
+                                    "cache_read_input_tokens": 900,
+                                    "output_tokens": 5}})
         ok, cost, t_in, t_out, models = self.canary(out)
         self.assertTrue(ok)
-        self.assertEqual((cost, t_in, t_out), (0.01, 100, 5))
-        # No modelUsage in the reply: the totals land on "default".
-        self.assertEqual(models, {"default": {"cost": 0.01, "in": 100, "out": 5}})
+        self.assertEqual((cost, t_in, t_out), (0.01, 1000, 5))
+        # No modelUsage in the reply: the totals land on "default",
+        # with the cache reads split out, not counted as fresh input.
+        self.assertEqual(models, {"default": {"cost": 0.01, "in": 100,
+                                              "cache": 900, "out": 5}})
 
     def test_other_reply_fails(self):
         ok, *_ = self.canary(json.dumps(

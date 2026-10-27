@@ -780,13 +780,14 @@ def smtp_settings(env):
             "from": env.get("BEARINGS_SMTP_FROM", "") or user}
 
 
-def should_notify(notify, actions, budget_stopped):
+def should_notify(notify, actions, budget_stopped, cost=0.0):
     """'always' sends after every executed sweep. 'on-action' sends when
-    the sweep spent usage or hit the budget stop."""
+    the sweep spent usage or hit the budget stop. The cost covers paid
+    work without an action line, such as a failed canary."""
     if notify == "always":
         return True
     if notify == "on-action":
-        return bool(actions) or budget_stopped
+        return bool(actions) or budget_stopped or cost > 0
     return False
 
 
@@ -797,6 +798,8 @@ def build_notification(today, last, month_line, warnings, budget_stopped,
         subject = f"bearings: budget stop reached — sweep ran no refreshes ({today})"
     elif any("FAILED" in a for a in actions):
         subject = f"bearings sweep {today}: {len(actions)} action(s), some FAILED"
+    elif any(w.startswith("canary FAILED") for w in warnings):
+        subject = f"bearings sweep {today}: canary FAILED, runs skipped"
     else:
         subject = f"bearings sweep {today}: {len(actions)} action(s)"
     body = ["Bearings sweep report", "", last, "", month_line]
@@ -842,12 +845,13 @@ def send_email(settings, to, subject, body):
 
 
 def notify_sweep(env, cfg, warnings, today, last, month_line,
-                 budget_stopped, actions):
+                 budget_stopped, actions, cost=0.0):
     """Send the sweep email when the notify settings ask for one. A
     notification failure becomes a warning; it never breaks the sweep."""
     notify = cfg.get("notify", "off")
     to = cfg.get("notify_email", "")
-    if notify == "off" or not should_notify(notify, actions, budget_stopped):
+    if notify == "off" or not should_notify(notify, actions, budget_stopped,
+                                            cost):
         return
     if not to:
         warnings.append("notify is on but notify_email is empty in _Config.md")
@@ -878,7 +882,9 @@ def parse_claude_json(stdout):
     modelUsage report, so subagent models count correctly:
     {model: {"cost": float, "in": int, "cache": int, "out": int}}.
     "in" counts fresh input tokens only; "cache" counts prompt-cache
-    reads, which cost about a tenth of a fresh input token."""
+    reads, which cost about a tenth of a fresh input token. When the
+    reply has usage but no modelUsage, the split totals land under the
+    empty model name; the caller renames that key (_name_fallback)."""
     try:
         j = json.loads(stdout)
     except (json.JSONDecodeError, ValueError):
@@ -900,7 +906,19 @@ def parse_claude_json(stdout):
             "cache": int(u.get("cacheReadInputTokens") or 0),
             "out": int(u.get("outputTokens") or 0),
         }
+    if not models and (cost or t_in or t_out):
+        models = {"": {"cost": cost,
+                       "in": int(usage.get("input_tokens") or 0),
+                       "cache": int(usage.get("cache_read_input_tokens") or 0),
+                       "out": t_out}}
     return cost, t_in, t_out, str(j.get("result") or ""), models
+
+
+def _name_fallback(models, model):
+    """The parse fallback record has no model name; the caller knows it."""
+    if "" in models:
+        models[model or "default"] = models.pop("")
+    return models
 
 
 def skills_canary(env, model=""):
@@ -921,10 +939,8 @@ def skills_canary(env, model=""):
     except subprocess.TimeoutExpired:
         return False, 0, 0, 0, {}
     cost, t_in, t_out, result, models = parse_claude_json(r.stdout)
-    if not models and (cost or t_in or t_out):
-        models = {model or "default": {"cost": cost, "in": t_in, "out": t_out}}
     return (r.returncode == 0 and "BEARINGS-DOC-LOADED" in result.upper(),
-            cost, t_in, t_out, models)
+            cost, t_in, t_out, _name_fallback(models, model))
 
 
 def run_claude(env, vault, machine, path, warnings, model=""):
@@ -963,10 +979,8 @@ def run_claude(env, vault, machine, path, warnings, model=""):
     if r is None:
         return False, 0, 0, 0, {}
     cost, tokens_in, tokens_out, _, models = parse_claude_json(r.stdout)
-    if not models and (cost or tokens_in or tokens_out):
-        models = {model or "default": {"cost": cost, "in": tokens_in,
-                                       "out": tokens_out}}
-    return r.returncode == 0, cost, tokens_in, tokens_out, models
+    return (r.returncode == 0, cost, tokens_in, tokens_out,
+            _name_fallback(models, model))
 
 
 # ---------- main ----------
@@ -1156,7 +1170,7 @@ def main():
     # The email goes out before the warnings block renders, so a notify
     # failure still shows on the dashboard.
     notify_sweep(env, cfg, warnings, today, last, month_line,
-                 budget_stopped, actions)
+                 budget_stopped, actions, cost)
     warn_block = "\n".join(f"> [!warning] {w}" for w in warnings) if warnings else "_none_"
 
     prune_runs(state, today)

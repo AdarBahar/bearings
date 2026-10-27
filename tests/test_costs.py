@@ -44,6 +44,15 @@ class TestParseModelUsage(unittest.TestCase):
         *_, models = parse_claude_json(json.dumps({"result": "ok"}))
         self.assertEqual(models, {})
 
+    def test_fallback_without_model_usage_keeps_the_cache_split(self):
+        out = json.dumps({"total_cost_usd": 0.5, "result": "ok",
+                          "usage": {"input_tokens": 10,
+                                    "cache_read_input_tokens": 1000,
+                                    "output_tokens": 2}})
+        *_, models = parse_claude_json(out)
+        self.assertEqual(models, {"": {"cost": 0.5, "in": 10,
+                                       "cache": 1000, "out": 2}})
+
 
 class TestRecordsAndPrune(unittest.TestCase):
     def test_record_one_entry_per_model_with_a_shared_call_id(self):
