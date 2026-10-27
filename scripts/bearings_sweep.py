@@ -142,6 +142,9 @@ def load_config(vault):
             val = default
         cfg[key] = val
 
+    model = fm.get("model", "")
+    cfg["model"] = model.strip() if isinstance(model, str) else ""
+
     try:
         cfg["budget_alert_usd"] = float(fm.get("budget_alert_usd", 0) or 0)
     except ValueError:
@@ -662,7 +665,43 @@ def bearings_home(env):
     return Path(env.get("BEARINGS_HOME") or Path(__file__).resolve().parent.parent)
 
 
-def run_claude(env, vault, machine, path, warnings):
+def parse_claude_json(stdout):
+    """(cost, tokens in, tokens out, result text) from a claude -p JSON
+    reply; zeros and an empty string when the output is not JSON."""
+    try:
+        j = json.loads(stdout)
+        cost = float(j.get("total_cost_usd") or 0)
+        usage = j.get("usage") or {}
+        t_in = int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
+        t_out = int(usage.get("output_tokens") or 0)
+        return cost, t_in, t_out, str(j.get("result") or "")
+    except (json.JSONDecodeError, ValueError):
+        return 0, 0, 0, ""
+
+
+def skills_canary(env, model=""):
+    """One cheap headless run that invokes /bearings-doc with --canary.
+    The loaded skill answers with a fixed token; in bare mode (a possible
+    future default for -p) the slash command resolves to nothing and the
+    token never appears. The check must invoke the skill, not ask about
+    it: disable-model-invocation hides the skill from the model's own
+    view, while a -p invocation still works. Returns (ok, cost,
+    tokens in, tokens out)."""
+    claude = env.get("BEARINGS_CLAUDE_BIN", "claude")
+    cmd = [claude, "-p", "/bearings-doc --canary",
+           "--output-format", "json", "--allowedTools", ""]
+    if model:
+        cmd += ["--model", model]
+    try:
+        r = run(cmd, timeout=300)
+    except subprocess.TimeoutExpired:
+        return False, 0, 0, 0
+    cost, t_in, t_out, result = parse_claude_json(r.stdout)
+    return (r.returncode == 0 and "BEARINGS-DOC-LOADED" in result.upper(),
+            cost, t_in, t_out)
+
+
+def run_claude(env, vault, machine, path, warnings, model=""):
     claude = env.get("BEARINGS_CLAUDE_BIN", "claude")
     target = path if machine["ssh"] is None else f"ssh={machine['ssh']}:{path}"
     home = bearings_home(env)
@@ -678,6 +717,8 @@ def run_claude(env, vault, machine, path, warnings):
     settings = home / "config" / "headless-settings.json"
     if settings.exists():
         cmd += ["--settings", str(settings)]
+    if model:
+        cmd += ["--model", model]
     run_env = {**os.environ, "BEARINGS_HOME": str(home),
                "BEARINGS_VAULT_DIR": str(vault)}
     repo_guard = repo_guard_snapshot(path) if machine["ssh"] is None else {}
@@ -695,15 +736,7 @@ def run_claude(env, vault, machine, path, warnings):
                             + ", ".join(restored))
     if r is None:
         return False, 0, 0, 0
-    cost = tokens_in = tokens_out = 0
-    try:
-        j = json.loads(r.stdout)
-        cost = float(j.get("total_cost_usd") or 0)
-        usage = j.get("usage") or {}
-        tokens_in = int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
-        tokens_out = int(usage.get("output_tokens") or 0)
-    except (json.JSONDecodeError, ValueError):
-        pass
+    cost, tokens_in, tokens_out, _ = parse_claude_json(r.stdout)
     return r.returncode == 0, cost, tokens_in, tokens_out
 
 
@@ -777,23 +810,43 @@ def main():
     seen = set()
     stale = [s for s in stale if not (s[0] in seen or seen.add(s[0]))]
 
+    model = cfg.get("model", "")
+
+    # Before any run starts: one cheap prompt proves that headless runs
+    # load the bearings-doc skill. Bare mode does not load skills, and a
+    # sweep that refreshes nothing must say so, not stay silent.
+    creates = [n for n in new
+               if not report_only
+               and (cfg["create_new"] == "auto" or (n[0], n[1]["name"]) in approved)]
+    canary_ok = True
+    if (do_refresh and stale) or creates:
+        canary_ok, c, ti, to = skills_canary(env, model)
+        cost += c; t_in += ti; t_out += to
+        if not canary_ok:
+            warnings.append("canary FAILED — headless runs do not load the "
+                            "bearings-doc skill (bare mode?); refreshes and "
+                            "creations skipped this sweep")
+
     guard = guard_snapshot(vault)
     pending_out = []
     attempted = False
     try:
-        for name, machine, path, stamp, updated in stale if do_refresh else []:
+        for name, machine, path, stamp, updated in stale if do_refresh and canary_ok else []:
             attempted = True
-            good, c, ti, to = run_claude(env, vault, machine, path, warnings)
+            good, c, ti, to = run_claude(env, vault, machine, path, warnings, model)
             cost += c; t_in += ti; t_out += to
             actions.append(f"refreshed {name}" if good else f"refresh FAILED {name}")
 
         for name, machine, path, stamp in new:
             approve = cfg["create_new"] == "auto" or (name, machine["name"]) in approved
-            if approve and not report_only:
+            if approve and not report_only and canary_ok:
                 attempted = True
-                good, c, ti, to = run_claude(env, vault, machine, path, warnings)
+                good, c, ti, to = run_claude(env, vault, machine, path, warnings, model)
                 cost += c; t_in += ti; t_out += to
                 actions.append(f"created {name}" if good else f"create FAILED {name}")
+            elif approve and not report_only:
+                # The canary failed: keep the approval, as a checked box.
+                pending_out.append(f"- [x] {name} @{machine['name']} (changed {stamp})")
             elif cfg["create_new"] == "ask":
                 pending_out.append(f"- [ ] {name} @{machine['name']} (changed {stamp})")
     finally:

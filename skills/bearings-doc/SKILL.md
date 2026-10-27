@@ -1,9 +1,12 @@
 ---
 name: bearings-doc
 description: Generate or refresh the Bearings notes for a project. Scans the repo (locally or over SSH) and writes the project note (current state), one note per running deployment, the changelog and the archive into the Bearings vault folder.
+disable-model-invocation: true
 ---
 
 # bearings-doc: generate/refresh the notes of a project
+
+**Canary:** if the argument is exactly `--canary`, reply with the single word `BEARINGS-DOC-LOADED` and stop. Do not read any file. (The sweep uses this to prove that headless runs load this skill.)
 
 You are documenting a project into the user's Obsidian vault so they (and future Claude sessions) can get oriented fast. The argument is a local path (default: current directory) or `ssh=<alias>:<path>` for a project on a remote machine.
 

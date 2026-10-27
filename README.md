@@ -114,6 +114,7 @@ The settings are the frontmatter of `_Config.md` in the vault. Edit them in Obsi
 cadence: weekly-monday        # daily | weekly-<weekday> | manual
 refresh_mode: report-only     # report-only | auto
 create_new: ask               # ask | auto | never
+model:                        # model for headless runs (empty = CLI default)
 budget_alert_usd: 0           # monthly cost warning (0 = off)
 
 machines:
@@ -132,6 +133,8 @@ aliases:                      # one note for a folder with a different name
 ```
 
 - **`refresh_mode`:** to find out-of-date notes costs nothing. To refresh a note uses Claude tokens. With `report-only` (the default), the sweep only lists the out-of-date notes. With `auto`, it runs `/bearings-doc` for them.
+- **`model`:** the model for the headless runs, for example a small model such as `claude-haiku-5-5`. A note refresh is mechanical work, so a smaller model cuts the cost. Empty uses the CLI default.
+- **Skill canary:** before the first run of a sweep, one cheap prompt proves that headless runs load the `bearings-doc` skill. If a future Claude Code release makes bare mode the default for `-p`, the sweep skips its runs and puts a loud warning on the dashboard instead of silently refreshing nothing.
 - **`create_new`:** what to do with a new project. `ask` puts a checkbox on the dashboard. `auto` writes the note immediately. `never` ignores it.
 - **Folders without Git:** Bearings tracks them only if an include pattern names them, or if they already have a note.
 - **Remote machines:** each sweep finds the projects over SSH. A headless Claude run can use SSH only if you allow it during the setup. This setting is in `~/.bearings/bearings.env`.
