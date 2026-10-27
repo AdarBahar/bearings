@@ -817,19 +817,26 @@ def build_notification(today, last, month_line, warnings, budget_stopped,
 def send_email(settings, to, subject, body):
     """Send one plain-text email. Raises on failure; the caller catches."""
     import smtplib
+    import ssl
     from email.message import EmailMessage
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = settings["from"]
     msg["To"] = to
     msg.set_content(body)
+    # An explicit context verifies the server certificate on every
+    # Python version; the credentials never travel unverified.
+    ctx = ssl.create_default_context()
     if settings["port"] == 465:
-        with smtplib.SMTP_SSL(settings["host"], settings["port"], timeout=30) as s:
+        with smtplib.SMTP_SSL(settings["host"], settings["port"],
+                              context=ctx, timeout=30) as s:
             s.login(settings["user"], settings["pass"])
             s.send_message(msg)
     else:
         with smtplib.SMTP(settings["host"], settings["port"], timeout=30) as s:
-            s.starttls()
+            s.ehlo()
+            s.starttls(context=ctx)
+            s.ehlo()
             s.login(settings["user"], settings["pass"])
             s.send_message(msg)
 
