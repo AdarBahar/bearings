@@ -680,18 +680,22 @@ def parse_claude_json(stdout):
 
 
 def skills_canary(env):
-    """One cheap headless prompt that asks whether the bearings-doc skill
-    is loaded. Bare mode (a possible future default for -p) does not load
-    skills, and the sweep must fail loudly, not refresh nothing in
-    silence. Returns (ok, cost, tokens in, tokens out)."""
+    """One cheap headless run that invokes /bearings-doc with --canary.
+    The loaded skill answers with a fixed token; in bare mode (a possible
+    future default for -p) the slash command resolves to nothing and the
+    token never appears. The check must invoke the skill, not ask about
+    it: disable-model-invocation hides the skill from the model's own
+    view, while a -p invocation still works. Returns (ok, cost,
+    tokens in, tokens out)."""
     claude = env.get("BEARINGS_CLAUDE_BIN", "claude")
-    r = run([claude, "-p",
-             "Do you have a skill or slash command named bearings-doc "
-             "available in this session? Reply with the single word YES "
-             "or the single word NO.",
-             "--output-format", "json", "--allowedTools", ""], timeout=300)
+    try:
+        r = run([claude, "-p", "/bearings-doc --canary",
+                 "--output-format", "json", "--allowedTools", ""], timeout=300)
+    except subprocess.TimeoutExpired:
+        return False, 0, 0, 0
     cost, t_in, t_out, result = parse_claude_json(r.stdout)
-    return r.returncode == 0 and "YES" in result.upper(), cost, t_in, t_out
+    return (r.returncode == 0 and "BEARINGS-DOC-LOADED" in result.upper(),
+            cost, t_in, t_out)
 
 
 def run_claude(env, vault, machine, path, warnings, model=""):

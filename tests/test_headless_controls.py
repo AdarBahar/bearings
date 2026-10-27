@@ -80,22 +80,52 @@ class TestSkillsCanary(unittest.TestCase):
                                return_value=fake_result(stdout, returncode)):
             return skills_canary({})
 
-    def test_yes_passes_and_cost_is_reported(self):
-        out = json.dumps({"result": "YES", "total_cost_usd": 0.01,
+    def test_canary_invokes_the_skill_instead_of_asking_about_it(self):
+        # disable-model-invocation hides the skill from the model's own
+        # view, so an availability question can answer NO on a healthy
+        # install. Invoking /bearings-doc --canary works under the lock.
+        calls = []
+
+        def recorder(cmd, **kw):
+            calls.append(cmd)
+            return fake_result(json.dumps({"result": "BEARINGS-DOC-LOADED"}))
+
+        with mock.patch.object(bearings_sweep, "run", recorder):
+            ok, *_ = skills_canary({})
+        self.assertTrue(ok)
+        self.assertIn("/bearings-doc --canary", calls[0])
+
+    def test_token_passes_and_cost_is_reported(self):
+        out = json.dumps({"result": "BEARINGS-DOC-LOADED",
+                          "total_cost_usd": 0.01,
                           "usage": {"input_tokens": 100, "output_tokens": 5}})
         ok, cost, t_in, t_out = self.canary(out)
         self.assertTrue(ok)
         self.assertEqual((cost, t_in, t_out), (0.01, 100, 5))
 
-    def test_no_fails(self):
-        ok, *_ = self.canary(json.dumps({"result": "NO"}))
+    def test_other_reply_fails(self):
+        ok, *_ = self.canary(json.dumps(
+            {"result": "I do not know that command."}))
         self.assertFalse(ok)
 
     def test_error_and_garbage_fail_closed(self):
-        ok, *_ = self.canary(json.dumps({"result": "YES"}), returncode=1)
+        ok, *_ = self.canary(json.dumps({"result": "BEARINGS-DOC-LOADED"}),
+                             returncode=1)
         self.assertFalse(ok)
         ok, *_ = self.canary("not json")
         self.assertFalse(ok)
+
+    def test_timeout_fails_closed_instead_of_aborting(self):
+        import subprocess
+        exc = subprocess.TimeoutExpired(cmd="claude", timeout=300)
+        with mock.patch.object(bearings_sweep, "run", side_effect=exc):
+            ok, cost, t_in, t_out = skills_canary({})
+        self.assertEqual((ok, cost, t_in, t_out), (False, 0, 0, 0))
+
+    def test_skill_canary_instruction_exists(self):
+        text = (ROOT / "skills" / "bearings-doc" / "SKILL.md").read_text()
+        self.assertIn("BEARINGS-DOC-LOADED", text)
+        self.assertIn("--canary", text)
 
 
 if __name__ == "__main__":
