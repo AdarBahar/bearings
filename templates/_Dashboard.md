@@ -20,6 +20,12 @@ _no runs yet_
 _no runs yet_
 <!-- /bearings:month -->
 
+## Costs
+
+<!-- bearings:costs -->
+_no runs yet_
+<!-- /bearings:costs -->
+
 ## New projects awaiting approval
 
 Tick a checkbox to have the next sweep document that project (`create_new: ask`).

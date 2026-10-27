@@ -71,7 +71,7 @@ class TestMainWiring(unittest.TestCase):
 
     def test_failed_canary_skips_runs_and_keeps_the_approval(self):
         with mock.patch.object(bearings_sweep, "skills_canary",
-                               return_value=(False, 0.0, 0, 0)) as canary, \
+                               return_value=(False, 0.0, 0, 0, {})) as canary, \
              mock.patch.object(bearings_sweep, "run_claude") as run_claude:
             self.assertEqual(bearings_sweep.main(), 0)
         run_claude.assert_not_called()
@@ -83,15 +83,20 @@ class TestMainWiring(unittest.TestCase):
         self.assertIn("- [x] app @mac", self.dash())
 
     def test_passing_canary_creates_the_note_with_the_model(self):
+        canary_models = {"claude-haiku-5-5": {"cost": 0.01, "in": 10, "out": 2}}
+        run_models = {"claude-haiku-5-5": {"cost": 0.05, "in": 100, "out": 20}}
         with mock.patch.object(bearings_sweep, "skills_canary",
-                               return_value=(True, 0.01, 10, 2)), \
+                               return_value=(True, 0.01, 10, 2, canary_models)), \
              mock.patch.object(bearings_sweep, "run_claude",
-                               return_value=(True, 0.05, 100, 20)) as run_claude:
+                               return_value=(True, 0.05, 100, 20, run_models)) as run_claude:
             self.assertEqual(bearings_sweep.main(), 0)
         run_claude.assert_called_once()
         # run_claude(env, vault, machine, path, warnings, model)
         self.assertEqual(run_claude.call_args[0][5], "claude-haiku-5-5")
         self.assertIn("created app", self.dash())
+        # The Costs section counts the canary and the create, per model.
+        self.assertIn("**Today:** 2 runs · $0.06", self.dash())
+        self.assertIn("| claude-haiku-5-5 | 2 | $0.06 |", self.dash())
 
     def test_report_only_never_calls_the_canary(self):
         with mock.patch.object(sys, "argv",

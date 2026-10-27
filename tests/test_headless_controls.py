@@ -102,9 +102,11 @@ class TestSkillsCanary(unittest.TestCase):
         out = json.dumps({"result": "BEARINGS-DOC-LOADED",
                           "total_cost_usd": 0.01,
                           "usage": {"input_tokens": 100, "output_tokens": 5}})
-        ok, cost, t_in, t_out = self.canary(out)
+        ok, cost, t_in, t_out, models = self.canary(out)
         self.assertTrue(ok)
         self.assertEqual((cost, t_in, t_out), (0.01, 100, 5))
+        # No modelUsage in the reply: the totals land on "default".
+        self.assertEqual(models, {"default": {"cost": 0.01, "in": 100, "out": 5}})
 
     def test_other_reply_fails(self):
         ok, *_ = self.canary(json.dumps(
@@ -122,8 +124,8 @@ class TestSkillsCanary(unittest.TestCase):
         import subprocess
         exc = subprocess.TimeoutExpired(cmd="claude", timeout=300)
         with mock.patch.object(bearings_sweep, "run", side_effect=exc):
-            ok, cost, t_in, t_out = skills_canary({})
-        self.assertEqual((ok, cost, t_in, t_out), (False, 0, 0, 0))
+            result = skills_canary({})
+        self.assertEqual(result, (False, 0, 0, 0, {}))
 
     def test_skill_canary_instruction_exists(self):
         text = (ROOT / "skills" / "bearings-doc" / "SKILL.md").read_text()

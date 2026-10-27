@@ -659,7 +659,7 @@ class TestTimeoutRestore(unittest.TestCase):
                                    wraps=bearings_sweep.repo_guard_restore) as rg:
                 result = bearings_sweep.run_claude({}, repo, machine,
                                                    str(repo), warnings)
-            self.assertEqual(result, (False, 0, 0, 0))
+            self.assertEqual(result, (False, 0, 0, 0, {}))
             self.assertTrue(any("timed out" in w for w in warnings))
             rg.assert_called_once()
         finally:
