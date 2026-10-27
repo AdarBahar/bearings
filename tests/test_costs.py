@@ -45,7 +45,7 @@ class TestParseModelUsage(unittest.TestCase):
 
 
 class TestRecordsAndPrune(unittest.TestCase):
-    def test_record_one_entry_per_model(self):
+    def test_record_one_entry_per_model_with_a_shared_call_id(self):
         state = {}
         record_runs(state, TODAY, "refresh", "app",
                     {"a": {"cost": 0.1, "in": 1, "out": 2},
@@ -53,6 +53,16 @@ class TestRecordsAndPrune(unittest.TestCase):
         self.assertEqual(len(state["runs"]), 2)
         self.assertEqual(state["runs"][0]["d"], "2026-10-27")
         self.assertEqual(state["runs"][1]["model"], "b")
+        # One call: the two model records share one id.
+        self.assertEqual(state["runs"][0]["id"], state["runs"][1]["id"])
+
+    def test_two_calls_on_the_same_project_count_as_two_runs(self):
+        state = {}
+        usage = {"a": {"cost": 0.3, "in": 1, "out": 1}}
+        record_runs(state, TODAY, "refresh", "app", usage)
+        record_runs(state, TODAY, "refresh", "app", usage)
+        block = cost_block(state, TODAY)
+        self.assertIn("**Today:** 2 runs · $0.60", block)
 
     def test_prune_drops_old_records_and_caps_the_list(self):
         state = {"runs": [rec("2026-01-01"), rec("2026-10-01")]}

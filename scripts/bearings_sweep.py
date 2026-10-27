@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -669,11 +670,16 @@ RUNS_CAP = 2000
 
 
 def record_runs(state, today, kind, name, models):
-    """One record per model per claude call, in state.json."""
+    """One record per model per claude call, in state.json. The records
+    of one call share one id, so the run counter counts calls, not
+    (day, kind, project) triples — two sweeps can touch the same project
+    on one day."""
     runs = state.setdefault("runs", [])
+    call_id = uuid.uuid4().hex[:12]
     for m, u in models.items():
-        runs.append({"d": today.isoformat(), "kind": kind, "name": name,
-                     "model": m, "cost": round(float(u["cost"]), 6),
+        runs.append({"id": call_id, "d": today.isoformat(), "kind": kind,
+                     "name": name, "model": m,
+                     "cost": round(float(u["cost"]), 6),
                      "in": int(u["in"]), "out": int(u["out"])})
 
 
@@ -684,7 +690,10 @@ def prune_runs(state, today):
 
 
 def _agg(records):
-    runs = len({(r["d"], r["kind"], r["name"]) for r in records})
+    # Older records have no id; they fall back to the (day, kind, name)
+    # triple.
+    runs = len({r.get("id") or (r["d"], r["kind"], r["name"])
+                for r in records})
     return (runs, sum(r["cost"] for r in records),
             sum(r["in"] for r in records), sum(r["out"] for r in records))
 
