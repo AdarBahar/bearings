@@ -100,7 +100,7 @@ Bearings/
 - **Changelog:** a summary of the Git history. Each refresh adds the new changes.
 - **Archive:** the history of the notes. Before Bearings replaces a fact, it copies the old text here with the date and the reason.
 - **Machine note:** the facts of one machine. It shows the deployments on the machine from the Base. Hosts that are not your machines also get a machine note: `Stores` (app store listings), `GitHub` (Pages and scheduled Actions) and `Testing` (services on servers that are not yours).
-- **Dashboard:** the result of each sweep. New projects show as checkboxes. Tick one to approve its note.
+- **Dashboard:** the result of each sweep. New projects show as checkboxes. Tick one to approve its note. A Costs section counts the runs and the spend for today, the last 7 days and this month, with a per-day table for the last week, a per-model table for the last 30 days, and the monthly history. The model table uses the CLI's own per-model usage, so subagent models count correctly.
 - **Group:** you can put related projects one level down under a parent project, for example `my-app/api/api.md`. Bearings finds them there.
 
 The notes help you find your way. They do not replace the documentation in the repository.

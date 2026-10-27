@@ -15,7 +15,8 @@ import re
 import shutil
 import subprocess
 import sys
-from datetime import date, datetime
+import uuid
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 BEARINGS_DIR = Path.home() / ".bearings"
@@ -26,6 +27,7 @@ MARK = {
     "warn": ("<!-- bearings:warnings -->", "<!-- /bearings:warnings -->"),
     "last": ("<!-- bearings:last-sweep -->", "<!-- /bearings:last-sweep -->"),
     "month": ("<!-- bearings:month -->", "<!-- /bearings:month -->"),
+    "costs": ("<!-- bearings:costs -->", "<!-- /bearings:costs -->"),
     "pending": ("<!-- bearings:pending -->", "<!-- /bearings:pending -->"),
     "history": ("<!-- bearings:history -->", "<!-- /bearings:history -->"),
 }
@@ -661,22 +663,122 @@ def repo_guard_restore(path, snap):
     return changed
 
 
+# ---------- cost counters ----------
+
+RUNS_KEEP_DAYS = 95   # covers day, week, this month and the previous month
+RUNS_CAP = 2000
+
+
+def record_runs(state, today, kind, name, models):
+    """One record per model per claude call, in state.json. The records
+    of one call share one id, so the run counter counts calls, not
+    (day, kind, project) triples — two sweeps can touch the same project
+    on one day."""
+    runs = state.setdefault("runs", [])
+    call_id = uuid.uuid4().hex[:12]
+    for m, u in models.items():
+        runs.append({"id": call_id, "d": today.isoformat(), "kind": kind,
+                     "name": name, "model": m,
+                     "cost": round(float(u["cost"]), 6),
+                     "in": int(u["in"]), "out": int(u["out"])})
+
+
+def prune_runs(state, today):
+    cutoff = (today - timedelta(days=RUNS_KEEP_DAYS)).isoformat()
+    runs = [r for r in state.get("runs", []) if r.get("d", "") >= cutoff]
+    state["runs"] = runs[-RUNS_CAP:]
+
+
+def _agg(records):
+    # Older records have no id; they fall back to the (day, kind, name)
+    # triple.
+    runs = len({r.get("id") or (r["d"], r["kind"], r["name"])
+                for r in records})
+    return (runs, sum(r["cost"] for r in records),
+            sum(r["in"] for r in records), sum(r["out"] for r in records))
+
+
+def cost_block(state, today):
+    """The Costs section of the dashboard: today / week / month counters,
+    a per-day table for the last week, a per-model table for the last 30
+    days, and the monthly history."""
+    runs = state.get("runs", [])
+    days7 = [(today - timedelta(days=i)).isoformat() for i in range(7)]
+    t = _agg([r for r in runs if r["d"] == days7[0]])
+    w = _agg([r for r in runs if r["d"] in set(days7)])
+    m = _agg([r for r in runs if r["d"].startswith(today.strftime("%Y-%m"))])
+    out = [f"**Today:** {t[0]} runs · ${t[1]:.2f} · "
+           f"**Last 7 days:** {w[0]} runs · ${w[1]:.2f} · "
+           f"**This month:** {m[0]} runs · ${m[1]:.2f}", ""]
+
+    day_rows = []
+    for d in days7:
+        n, c, ti, to = _agg([r for r in runs if r["d"] == d])
+        if n:
+            day_rows.append(f"| {d} | {n} | ${c:.2f} | {ti:,} | {to:,} |")
+    if day_rows:
+        out += ["| Day | Runs | Cost | Tokens in | Tokens out |",
+                "|---|---|---|---|---|"] + day_rows + [""]
+
+    cutoff30 = (today - timedelta(days=30)).isoformat()
+    by_model = {}
+    for r in runs:
+        if r["d"] >= cutoff30:
+            by_model.setdefault(r["model"], []).append(r)
+    if by_model:
+        out += ["**Per model, last 30 days** (all runs go through the "
+                "Claude CLI; the model is the vendor breakdown):", "",
+                "| Model | Runs | Cost | Tokens in | Tokens out |",
+                "|---|---|---|---|---|"]
+        for name, rs in sorted(by_model.items(),
+                               key=lambda kv: -sum(r["cost"] for r in kv[1])):
+            n, c, ti, to = _agg(rs)
+            out.append(f"| {name} | {n} | ${c:.2f} | {ti:,} | {to:,} |")
+        out.append("")
+
+    months = state.get("months", {})
+    if months:
+        out += ["**Monthly history:**", "",
+                "| Month | Sweeps | Cost | Tokens in | Tokens out |",
+                "|---|---|---|---|---|"]
+        for key in sorted(months, reverse=True)[:12]:
+            mo = months[key]
+            out.append(f"| {key} | {mo['runs']} | ${mo['cost']:.2f} "
+                       f"| {mo['t_in']:,} | {mo['t_out']:,} |")
+    return "\n".join(out).rstrip()
+
+
 def bearings_home(env):
     return Path(env.get("BEARINGS_HOME") or Path(__file__).resolve().parent.parent)
 
 
 def parse_claude_json(stdout):
-    """(cost, tokens in, tokens out, result text) from a claude -p JSON
-    reply; zeros and an empty string when the output is not JSON."""
+    """(cost, tokens in, tokens out, result text, per-model usage) from a
+    claude -p JSON reply; zeros, an empty string and an empty dict when
+    the output is not JSON. Per-model usage comes from the CLI's own
+    modelUsage report, so subagent models count correctly:
+    {model: {"cost": float, "in": int, "out": int}}."""
     try:
         j = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        return 0, 0, 0, "", {}
+    try:
         cost = float(j.get("total_cost_usd") or 0)
         usage = j.get("usage") or {}
         t_in = int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
         t_out = int(usage.get("output_tokens") or 0)
-        return cost, t_in, t_out, str(j.get("result") or "")
-    except (json.JSONDecodeError, ValueError):
-        return 0, 0, 0, ""
+    except (ValueError, TypeError, AttributeError):
+        return 0, 0, 0, "", {}
+    models = {}
+    for name, u in (j.get("modelUsage") or {}).items():
+        if not isinstance(u, dict):
+            continue
+        models[str(name)] = {
+            "cost": float(u.get("costUSD") or u.get("cost_usd") or 0),
+            "in": int(u.get("inputTokens") or 0) + int(u.get("cacheReadInputTokens") or 0),
+            "out": int(u.get("outputTokens") or 0),
+        }
+    return cost, t_in, t_out, str(j.get("result") or ""), models
 
 
 def skills_canary(env, model=""):
@@ -695,10 +797,12 @@ def skills_canary(env, model=""):
     try:
         r = run(cmd, timeout=300)
     except subprocess.TimeoutExpired:
-        return False, 0, 0, 0
-    cost, t_in, t_out, result = parse_claude_json(r.stdout)
+        return False, 0, 0, 0, {}
+    cost, t_in, t_out, result, models = parse_claude_json(r.stdout)
+    if not models and (cost or t_in or t_out):
+        models = {model or "default": {"cost": cost, "in": t_in, "out": t_out}}
     return (r.returncode == 0 and "BEARINGS-DOC-LOADED" in result.upper(),
-            cost, t_in, t_out)
+            cost, t_in, t_out, models)
 
 
 def run_claude(env, vault, machine, path, warnings, model=""):
@@ -735,9 +839,12 @@ def run_claude(env, vault, machine, path, warnings, model=""):
             warnings.append("a run changed .git guard files; restored: "
                             + ", ".join(restored))
     if r is None:
-        return False, 0, 0, 0
-    cost, tokens_in, tokens_out, _ = parse_claude_json(r.stdout)
-    return r.returncode == 0, cost, tokens_in, tokens_out
+        return False, 0, 0, 0, {}
+    cost, tokens_in, tokens_out, _, models = parse_claude_json(r.stdout)
+    if not models and (cost or tokens_in or tokens_out):
+        models = {model or "default": {"cost": cost, "in": tokens_in,
+                                       "out": tokens_out}}
+    return r.returncode == 0, cost, tokens_in, tokens_out, models
 
 
 # ---------- main ----------
@@ -820,8 +927,9 @@ def main():
                and (cfg["create_new"] == "auto" or (n[0], n[1]["name"]) in approved)]
     canary_ok = True
     if (do_refresh and stale) or creates:
-        canary_ok, c, ti, to = skills_canary(env, model)
+        canary_ok, c, ti, to, models = skills_canary(env, model)
         cost += c; t_in += ti; t_out += to
+        record_runs(state, today, "canary", "-", models)
         if not canary_ok:
             warnings.append("canary FAILED — headless runs do not load the "
                             "bearings-doc skill (bare mode?); refreshes and "
@@ -833,16 +941,18 @@ def main():
     try:
         for name, machine, path, stamp, updated in stale if do_refresh and canary_ok else []:
             attempted = True
-            good, c, ti, to = run_claude(env, vault, machine, path, warnings, model)
+            good, c, ti, to, models = run_claude(env, vault, machine, path, warnings, model)
             cost += c; t_in += ti; t_out += to
+            record_runs(state, today, "refresh", name, models)
             actions.append(f"refreshed {name}" if good else f"refresh FAILED {name}")
 
         for name, machine, path, stamp in new:
             approve = cfg["create_new"] == "auto" or (name, machine["name"]) in approved
             if approve and not report_only and canary_ok:
                 attempted = True
-                good, c, ti, to = run_claude(env, vault, machine, path, warnings, model)
+                good, c, ti, to, models = run_claude(env, vault, machine, path, warnings, model)
                 cost += c; t_in += ti; t_out += to
+                record_runs(state, today, "create", name, models)
                 actions.append(f"created {name}" if good else f"create FAILED {name}")
             elif approve and not report_only:
                 # The canary failed: keep the approval, as a checked box.
@@ -891,9 +1001,11 @@ def main():
                   + f" · {mo['t_in']:,} in / {mo['t_out']:,} out")
     pending_block = "\n".join(pending_out) if pending_out else "_none — new projects appear here for approval when `create_new: ask`_"
 
+    prune_runs(state, today)
     dash_text = replace_section(dash_text, "warn", warn_block)
     dash_text = replace_section(dash_text, "last", last)
     dash_text = replace_section(dash_text, "month", month_line)
+    dash_text = replace_section(dash_text, "costs", cost_block(state, today))
     dash_text = replace_section(dash_text, "pending", pending_block)
     done_count = sum(1 for a in actions if "FAILED" not in a)
     hist_row = f"| {today} | {len(new)} | {len(stale)} | {done_count} | ${cost:.2f} | {ok} ok |"
