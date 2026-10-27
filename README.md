@@ -21,7 +21,41 @@ The goal: you come back to a project after three months, and in five minutes you
 - **Better coding agents.** Claude Code reads the notes through the Bearings skills. Other agents find them through a pointer in `CLAUDE.md` or `AGENTS.md`.
 - **Answers in plain English.** Ask "what runs on my server?" and Bearings checks the live state before it answers.
 - **No secrets in the notes.** The notes contain the names of the variables, never their values.
-- **Cost control.** The dashboard shows the token use and cost of each run, with a monthly total.
+- **Cost control.** A costs dashboard, a budget alert, a hard budget stop, and email reports.
+
+## Features
+
+**Knowledge base**
+- One note per project: what it does, how to start it, how to deploy it, configuration, architecture, and a "Resume here" section that survives each refresh.
+- One note per running deployment, with the facts as properties. Obsidian Bases shows them as tables per project, machine and environment.
+- A changelog from Git and an archive of replaced facts, per project.
+- Machine notes, group folders, and an index with one row per project.
+
+**Automation**
+- A scheduled sweep (launchd, systemd or cron) finds new and out-of-date notes. Discovery, reports and lint cost nothing; only a refresh spends Claude usage.
+- New projects wait as checkboxes on the dashboard. Tick one to approve its note.
+- A deterministic linter checks properties, values, links and leftover template text — no AI inside. A hook lints each note directly after a headless edit.
+- A canary run proves that headless runs load the skill before any paid run starts.
+
+**Cost dashboard**
+- Counters for today, the last 7 days and this month, inside the vault (`_Dashboard.md`).
+- A per-day table for the last week and a per-model table for the last 30 days, with fresh input tokens and prompt-cache reads in separate columns. A cache read costs about a tenth of a fresh input token, so the split shows the real cost drivers.
+- A monthly history of sweeps, cost and tokens.
+
+**Cost controls**
+- `model`: run the headless refreshes on a small model such as `claude-haiku-5-5`.
+- `budget_alert_usd`: a warning on the dashboard when the month passes it.
+- `budget_stop_usd`: a hard stop. At the cap, the sweep skips every paid run until the next month. The free parts continue, and approvals stay checked.
+
+**Email notifications**
+- `notify: on-action` sends a report when a sweep spends usage, fails its canary, or hits the budget stop. `always` reports every executed sweep.
+- The budget-stop email lists the recovery steps. The SMTP credentials stay machine-local in `~/.bearings/bearings.env`, never in the vault.
+
+**Security**
+- Deny rules and a PreToolUse hook enforce the `.env` rule; a read-only git wrapper, snapshot guards and a skill lock limit what a headless run can do. The [Security](#security) section has the full model.
+
+**No dependencies**
+- Python standard library only. No pip installs. CI runs the test suite, the syntax checks and Shellcheck on each push.
 
 ## Index of skills and tools
 
@@ -165,6 +199,8 @@ skills/bearings-ops/         questions, live checks, actions with confirmation
 scripts/bearings_sweep.py    discovery, out-of-date check, approvals, dashboard, cost
 scripts/bearings_lint.py     deterministic note checks (properties, values, links, template text)
 scripts/lint_hook.py         PostToolUse hook: lints a note after each headless edit
+scripts/secret_guard.py      PreToolUse hook: blocks the .env family before a tool runs
+scripts/git_ro.py            read-only git wrapper for headless runs (vetted subcommands and flags)
 scripts/install-schedule.sh  daily timer: launchd (macOS), systemd user timer (Linux), or cron
 config/headless-settings.json  hook configuration for headless runs (the sweep passes it with --settings)
 templates/                   _Config.md, _Dashboard.md, _Deployments.base and the note templates
