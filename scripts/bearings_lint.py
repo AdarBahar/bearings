@@ -145,6 +145,12 @@ def link_resolves(target, names):
     return False
 
 
+def is_linted(text):
+    """True when the note text has a frontmatter with a recognized `type:`."""
+    fm = parse_frontmatter(text)
+    return fm is not None and isinstance(fm.get("type"), str) and fm["type"] in NOTE_TYPES
+
+
 def lint_file(path, vault, names):
     """Lint one note. Returns a list of problem messages. A file without a
     recognized `type:` (changelog, dashboard, index) returns no problems."""

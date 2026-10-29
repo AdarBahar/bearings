@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from bearings_lint import collect_names, lint_file, resolve_vault  # noqa: E402
+from bearings_lint import collect_names, is_linted, lint_file, resolve_vault  # noqa: E402
 
 
 def main():
@@ -35,6 +35,9 @@ def main():
     except ValueError:
         return 0
     if not path.exists():
+        return 0
+    # The name index scans the whole vault, so build it only for a typed note.
+    if not is_linted(path.read_text()):
         return 0
     problems = lint_file(path, vault, collect_names(vault))
     if problems:
