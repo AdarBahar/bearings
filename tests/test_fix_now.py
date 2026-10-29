@@ -69,6 +69,18 @@ class TestInstallerEscape(unittest.TestCase):
         self.assertEqual(root.text, value)
 
 
+class TestCollectNames(unittest.TestCase):
+    def test_hidden_and_template_folders_are_skipped(self):
+        root = Path(tempfile.mkdtemp())
+        for rel in ("a/note.md", "a/pic.png", ".trash/gone.md", "_templates/t.md",
+                    "a/.hidden.md", "b/.git/x.md"):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text("x")
+        exact, paths = bearings_lint.collect_names(root)
+        self.assertEqual(exact, {"note.md", "a/note.md", "note", "a/note", "pic.png", "a/pic.png"})
+        self.assertEqual(sorted(paths), ["a/note", "a/note.md", "a/pic.png"])
+
+
 class TestIsLinted(unittest.TestCase):
     def test_typed_note_is_linted(self):
         self.assertTrue(bearings_lint.is_linted("---\ntype: project\n---\nbody"))
