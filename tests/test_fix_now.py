@@ -3,6 +3,7 @@ and the lint hook type check.
 Run with:  python3 -m unittest discover tests"""
 
 import subprocess
+import xml.etree.ElementTree as ET
 import sys
 import tempfile
 import unittest
@@ -53,6 +54,19 @@ class TestStateAndLock(unittest.TestCase):
         again = bearings_sweep.acquire_lock()
         self.assertIsNotNone(again)
         again.close()
+
+
+class TestInstallerEscape(unittest.TestCase):
+    def escape(self, value):
+        script = (ROOT / "scripts" / "install-schedule.sh").read_text()
+        line = next(l for l in script.splitlines() if l.startswith("xml_escape()"))
+        return subprocess.run(["bash", "-c", f'{line}\nxml_escape "$1"', "bash", value],
+                              capture_output=True, text=True, check=True).stdout
+
+    def test_xml_special_characters_round_trip(self):
+        value = "/Users/a b/<x>&y/code"
+        root = ET.fromstring(f"<string>{self.escape(value)}</string>")
+        self.assertEqual(root.text, value)
 
 
 class TestIsLinted(unittest.TestCase):

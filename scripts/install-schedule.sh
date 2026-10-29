@@ -12,7 +12,9 @@ PYTHON="$(command -v python3)"
 
 # Escape a value for each target format, so a path with a space or a special
 # character does not break the generated file.
-xml_escape() { local s=${1//&/&amp;}; s=${s//</&lt;}; printf '%s' "${s//>/&gt;}"; }
+# sed, not ${var//&/...}: Bash 5.2 and later read an unquoted & in the
+# replacement as the matched text.
+xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
 unit_escape() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//%/%%}; printf '%s' "${s//\$/\$\$}"; }
 
 if [ "$(uname)" = "Darwin" ]; then
