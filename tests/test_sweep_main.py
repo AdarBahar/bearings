@@ -162,7 +162,8 @@ class TestMainWiring(unittest.TestCase):
         with mock.patch.object(bearings_sweep, "skills_canary",
                                return_value=(True, 0.5, 10, 2, {})), \
              mock.patch.object(bearings_sweep, "run_claude",
-                               return_value=(True, 1.0, 100, 20, {})), \
+                               return_value=(True, 1.0, 100, 20,
+                                             {"m": {"cost": 1.0, "in": 100, "out": 20}})), \
              mock.patch.object(bearings_sweep, "replace_section",
                                side_effect=OSError("disk")):
             with self.assertRaises(OSError):
@@ -171,6 +172,8 @@ class TestMainWiring(unittest.TestCase):
         mo = json.loads((self.tmp / ".bearings" / "state.json").read_text())["months"][month]
         self.assertAlmostEqual(mo["cost"], 1.5)
         self.assertEqual(mo["t_in"], 110)
+        runs = json.loads((self.tmp / ".bearings" / "state.json").read_text())["runs"]
+        self.assertAlmostEqual(sum(r["cost"] for r in runs), 1.0)
 
 
 if __name__ == "__main__":

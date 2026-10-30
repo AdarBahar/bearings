@@ -1178,11 +1178,13 @@ def run_sweep():
     months = state.setdefault("months", {})
     mo = months.setdefault(month_key, {"runs": 0, "cost": 0.0, "t_in": 0, "t_out": 0})
 
-    def bill(c, ti, to):
-        # Save each paid call at once, so a later failure cannot lose it.
+    def bill(c, ti, to, kind, name, models):
+        # Record and save each paid call at once, so a later failure cannot
+        # lose the totals or the per-model records.
         nonlocal cost, t_in, t_out
         cost += c; t_in += ti; t_out += to
         mo["cost"] += c; mo["t_in"] += int(ti); mo["t_out"] += int(to)
+        record_runs(state, today, kind, name, models)
         save_state(state)
 
     def over_stop():
@@ -1197,8 +1199,7 @@ def run_sweep():
     canary_ok = True
     if not budget_stopped and ((do_refresh and stale) or creates):
         canary_ok, c, ti, to, models = skills_canary(env, model)
-        bill(c, ti, to)
-        record_runs(state, today, "canary", "-", models)
+        bill(c, ti, to, "canary", "-", models)
         if not canary_ok:
             warnings.append("canary FAILED — headless runs do not load the "
                             "bearings-doc skill (bare mode?); refreshes and "
@@ -1218,8 +1219,7 @@ def run_sweep():
                 break
             attempted = True
             good, c, ti, to, models = run_claude(env, vault, machine, path, warnings, model)
-            bill(c, ti, to)
-            record_runs(state, today, "refresh", name, models)
+            bill(c, ti, to, "refresh", name, models)
             actions.append(f"refreshed {name}" if good else f"refresh FAILED {name}")
 
         for name, machine, path, stamp in new:
@@ -1233,8 +1233,7 @@ def run_sweep():
             if approve and not report_only and canary_ok and not budget_stopped:
                 attempted = True
                 good, c, ti, to, models = run_claude(env, vault, machine, path, warnings, model)
-                bill(c, ti, to)
-                record_runs(state, today, "create", name, models)
+                bill(c, ti, to, "create", name, models)
                 actions.append(f"created {name}" if good else f"create FAILED {name}")
             elif (name, machine["name"]) in approved or (approve and not report_only):
                 # The canary failed, the budget stop hit, or this is a
