@@ -10,6 +10,13 @@ LABEL="com.bearings.sweep"
 TIME="${1:-09:00}"
 PYTHON="$(command -v python3)"
 
+# Escape a value for each target format, so a path with a space or a special
+# character does not break the generated file.
+# sed, not ${var//&/...}: Bash 5.2 and later read an unquoted & in the
+# replacement as the matched text.
+xml_escape() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+unit_escape() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//%/%%}; printf '%s' "${s//\$/\$\$}"; }
+
 if [ "$(uname)" = "Darwin" ]; then
   PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
   if [ "${1:-}" = "--uninstall" ]; then
@@ -24,17 +31,17 @@ if [ "$(uname)" = "Darwin" ]; then
 <plist version="1.0"><dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key><array>
-    <string>$PYTHON</string>
-    <string>$SCRIPT_DIR/bearings_sweep.py</string>
+    <string>$(xml_escape "$PYTHON")</string>
+    <string>$(xml_escape "$SCRIPT_DIR/bearings_sweep.py")</string>
   </array>
   <key>StartCalendarInterval</key><dict>
     <key>Hour</key><integer>$((10#$HOUR))</integer>
     <key>Minute</key><integer>$((10#$MIN))</integer>
   </dict>
-  <key>StandardOutPath</key><string>$HOME/.bearings/sweep.log</string>
-  <key>StandardErrorPath</key><string>$HOME/.bearings/sweep.log</string>
+  <key>StandardOutPath</key><string>$(xml_escape "$HOME/.bearings/sweep.log")</string>
+  <key>StandardErrorPath</key><string>$(xml_escape "$HOME/.bearings/sweep.log")</string>
   <key>EnvironmentVariables</key><dict>
-    <key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>PATH</key><string>$(xml_escape "$HOME")/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
 </dict></plist>
 EOF
@@ -49,15 +56,18 @@ else
       systemctl --user disable --now bearings-sweep.timer 2>/dev/null || true
       rm -f "$UNIT_DIR/bearings-sweep."{service,timer}; echo "bearings: schedule removed"; exit 0
     fi
-    printf '[Unit]\nDescription=Bearings sweep\n[Service]\nType=oneshot\nExecStart=%s %s/bearings_sweep.py\nStandardOutput=append:%s/.bearings/sweep.log\nStandardError=append:%s/.bearings/sweep.log\n' \
-      "$PYTHON" "$SCRIPT_DIR" "$HOME" "$HOME" > "$UNIT_DIR/bearings-sweep.service"
+    LOG="$(unit_escape "$HOME")/.bearings/sweep.log"
+    printf '[Unit]\nDescription=Bearings sweep\n[Service]\nType=oneshot\nExecStart="%s" "%s/bearings_sweep.py"\nStandardOutput=append:%s\nStandardError=append:%s\n' \
+      "$(unit_escape "$PYTHON")" "$(unit_escape "$SCRIPT_DIR")" "$LOG" "$LOG" > "$UNIT_DIR/bearings-sweep.service"
     printf '[Unit]\nDescription=Daily Bearings sweep\n[Timer]\nOnCalendar=*-*-* %s:00\nPersistent=true\n[Install]\nWantedBy=timers.target\n' \
       "$TIME" > "$UNIT_DIR/bearings-sweep.timer"
     systemctl --user daemon-reload
     systemctl --user enable --now bearings-sweep.timer
     echo "bearings: systemd user timer installed — daily $TIME (log: ~/.bearings/sweep.log)"
   else
-    CRON_LINE="${TIME##*:} ${TIME%%:*} * * * $PYTHON $SCRIPT_DIR/bearings_sweep.py >> $HOME/.bearings/sweep.log 2>&1 # bearings-sweep"
+    # cron passes the line to sh, and treats an unescaped % as a newline.
+    CMD="$(printf '%q %q >> %q 2>&1' "$PYTHON" "$SCRIPT_DIR/bearings_sweep.py" "$HOME/.bearings/sweep.log")"
+    CRON_LINE="${TIME##*:} ${TIME%%:*} * * * ${CMD//%/\\%} # bearings-sweep"
     if [ "${1:-}" = "--uninstall" ]; then
       crontab -l 2>/dev/null | grep -v '# bearings-sweep' | crontab -; echo "bearings: schedule removed"; exit 0
     fi

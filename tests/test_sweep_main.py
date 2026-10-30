@@ -126,6 +126,9 @@ class TestMainWiring(unittest.TestCase):
             self.assertEqual(bearings_sweep.main(), 0)
         canary.assert_not_called()
         run_claude.assert_not_called()
+        # A report run keeps the checked approval and does not mark the day done.
+        self.assertIn("- [x] app @mac", self.dash())
+        self.assertNotIn("last_run", bearings_sweep.load_state())
 
 
 if __name__ == "__main__":

@@ -8,10 +8,12 @@ state is ~/.bearings/bearings.env (pointer to the vault) and ~/.bearings/state.j
 Stdlib only — no pip installs.
 """
 
+import fcntl
 import fnmatch
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -59,7 +61,22 @@ def load_state():
 
 def save_state(state):
     BEARINGS_DIR.mkdir(exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    tmp = STATE_FILE.with_name(f"{STATE_FILE.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    os.replace(tmp, STATE_FILE)  # atomic: a reader never sees a half-written file
+
+
+def acquire_lock():
+    """Take the sweep lock. Returns the open lock file, or None when another
+    sweep holds it. The lock goes away when the process exits."""
+    BEARINGS_DIR.mkdir(exist_ok=True)
+    handle = open(BEARINGS_DIR / "sweep.lock", "w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
 
 
 # ---------- config page (frontmatter subset parser) ----------
@@ -212,6 +229,15 @@ def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
 
 
+def stamp_from_epoch(text):
+    """Epoch seconds (an int or a float, as text) -> local YYYY-MM-DDTHH:MM,
+    or None when the text is not a number."""
+    try:
+        return datetime.fromtimestamp(float(text)).strftime(STAMP_PY)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
 def local_projects(dirs):
     out = []
     for base in dirs:
@@ -223,8 +249,8 @@ def local_projects(dirs):
                 continue
             is_git = (d / ".git").is_dir()
             if is_git:
-                r = run(["git", "-C", str(d), "log", "-1", "--format=%cd", f"--date={STAMP_GIT}"])
-                stamp = r.stdout.strip()
+                r = run(["git", "-C", str(d), "log", "-1", "--format=%ct"])
+                stamp = stamp_from_epoch(r.stdout.strip())
             else:
                 stamp = newest_mtime_local(d)
             if stamp:
@@ -233,8 +259,9 @@ def local_projects(dirs):
 
 
 # A stamp is local time to the minute, so a change after a refresh on the
-# same day still counts as new. The format works for git and for find.
-STAMP_GIT = "format-local:%Y-%m-%dT%H:%M"
+# same day still counts as new. Git and find report epoch seconds, which have
+# no time zone; stamp_from_epoch converts them to this machine's local time,
+# the same clock that writes a note's `updated` value.
 STAMP_PY = "%Y-%m-%dT%H:%M"
 # Clock skew between the machine and the model's clock that wrote `updated`.
 STAMP_TOLERANCE = timedelta(minutes=2)
@@ -257,29 +284,34 @@ def newest_mtime_local(d):
     return datetime.fromtimestamp(newest).strftime(STAMP_PY) if newest else None
 
 
-def remote_projects(machine):
+def remote_script(machine):
     prune = " ".join(f'-not -path "*/{p}/*"' for p in MTIME_PRUNE)
-    dirs = " ".join(f'"{d}"/*/' for d in machine["dirs"])
-    script = f'''
+    # The glob stays outside the quotes; the directory name is quoted.
+    dirs = " ".join(f"{shlex.quote(d)}/*/" for d in machine["dirs"])
+    return f'''
 for d in {dirs}; do
   [ -d "$d" ] || continue
   n=$(basename "$d")
   if [ -d "$d/.git" ]; then
-    echo "$n|$(git -C "$d" log -1 --format=%cd --date={STAMP_GIT} 2>/dev/null)|git|$d"
+    echo "$n|$(git -C "$d" log -1 --format=%ct 2>/dev/null)|git|$d"
   else
     dt=$(find "$d" -type f {prune} -not -name "*.log" -not -name "*.pid" \
-         -printf "%TY-%Tm-%TdT%TH:%TM\\n" 2>/dev/null | sort -r | head -1)
+         -printf "%T@\n" 2>/dev/null | sort -rn | head -1)
     echo "$n|$dt|dir|$d"
   fi
 done'''
+
+
+def remote_projects(machine):
+    script = remote_script(machine)
     r = run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", machine["ssh"], script])
     if r.returncode != 0:
         return None
     out = []
     for line in r.stdout.splitlines():
         parts = line.split("|")
-        if len(parts) == 4 and parts[1]:
-            out.append((parts[0], parts[1], parts[2] == "git", parts[3]))
+        if len(parts) == 4 and stamp_from_epoch(parts[1]):
+            out.append((parts[0], stamp_from_epoch(parts[1]), parts[2] == "git", parts[3]))
     return out
 
 
@@ -1001,6 +1033,15 @@ def run_claude(env, vault, machine, path, warnings, model=""):
 # ---------- main ----------
 
 def main():
+    lock = acquire_lock()
+    if lock is None:
+        print("bearings: another sweep is running — exit", file=sys.stderr)
+        return 0
+    with lock:
+        return run_sweep()
+
+
+def run_sweep():
     force = "--force" in sys.argv
     report_only = "--report" in sys.argv
     env = load_env()
@@ -1135,9 +1176,9 @@ def main():
                 cost += c; t_in += ti; t_out += to
                 record_runs(state, today, "create", name, models)
                 actions.append(f"created {name}" if good else f"create FAILED {name}")
-            elif approve and not report_only:
-                # The canary failed or the budget stop hit: keep the
-                # approval, as a checked box.
+            elif (name, machine["name"]) in approved or (approve and not report_only):
+                # The canary failed, the budget stop hit, or this is a
+                # report-only run: keep the approval, as a checked box.
                 pending_out.append(f"- [x] {name} @{machine['name']} (changed {stamp})")
             elif cfg["create_new"] == "ask":
                 pending_out.append(f"- [ ] {name} @{machine['name']} (changed {stamp})")
@@ -1205,7 +1246,8 @@ def main():
         dash_text = replace_section(dash_text, "history", header + "\n" + hist_row)
     dash.write_text(dash_text)
 
-    state["last_run"] = today.isoformat()
+    if not report_only:  # a report run must not block the normal sweep today
+        state["last_run"] = today.isoformat()
     save_state(state)
 
     print(f"bearings sweep: {len(new)} new, {len(stale)} stale, {ok} up-to-date, "
