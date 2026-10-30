@@ -2,6 +2,7 @@
 Run with:  python3 -m unittest discover tests"""
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -41,6 +42,95 @@ class TestLocalFilter(unittest.TestCase):
             out = bearings_sweep.local_projects([str(base)], lambda name, is_git: False)
         self.assertEqual(out, [])
         run.assert_not_called()
+
+
+class TestGitfile(unittest.TestCase):
+    def test_worktree_without_note_is_found_under_default_include(self):
+        base = Path(tempfile.mkdtemp())
+        wt = base / "wt"
+        wt.mkdir()
+        (wt / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n")
+        (base / "plain").mkdir()
+        (base / "bogus").mkdir()
+        (base / "bogus" / ".git").write_text("not a gitfile\n")
+        seen = {}
+        def wanted(name, is_git):
+            seen[name] = is_git
+            return False
+        bearings_sweep.local_projects([str(base)], wanted)
+        self.assertEqual(seen, {"wt": True, "plain": False, "bogus": False})
+        cfg = {"include": ["*"], "exclude": []}
+        self.assertTrue(bearings_sweep.allowed(cfg, "m", "wt", True, False))
+
+    def test_remote_scripts_test_for_a_gitfile(self):
+        m = {"ssh": "h", "dirs": ["/code"]}
+        self.assertIn("gitdir:", bearings_sweep.remote_list_script(m))
+        self.assertIn("gitdir:", bearings_sweep.remote_script(m))
+
+    @unittest.skipUnless(shutil.which("sh"), "needs sh")
+    def test_remote_list_script_classifies_a_worktree(self):
+        base = Path(tempfile.mkdtemp())
+        (base / "wt").mkdir()
+        (base / "wt" / ".git").write_text("gitdir: /x\n")
+        (base / "plain").mkdir()
+        out = subprocess.run(["sh", "-c", bearings_sweep.remote_list_script(
+            {"ssh": "h", "dirs": [str(base)]})], capture_output=True, text=True).stdout
+        self.assertIn(f"git|{base}/wt/", out)
+        self.assertIn(f"dir|{base}/plain/", out)
+
+
+class TestRemoteHome(unittest.TestCase):
+    def test_ssh_machine_keeps_the_tilde(self):
+        errors = []
+        ms = bearings_sweep.parse_machines(
+            ["mac | local | ~/Code", "box | ssh=linux | ~/Code"], errors)
+        self.assertEqual(ms[0]["dirs"], [os.path.expanduser("~/Code")])
+        self.assertEqual(ms[1]["dirs"], ["~/Code"])
+
+    def test_remote_home_resolves_on_the_remote_shell(self):
+        base = Path(tempfile.mkdtemp())
+        (base / "Code" / "a b").mkdir(parents=True)
+        word = bearings_sweep.remote_dirs({"dirs": ["~/Code"]})
+        self.assertTrue(word.startswith('"$HOME"/'))
+        out = subprocess.run(["sh", "-c", f"for d in {word}; do echo \"$d\"; done"],
+                             env={"HOME": str(base), "PATH": os.environ["PATH"]},
+                             capture_output=True, text=True).stdout
+        self.assertEqual(out.strip(), f"{base}/Code/a b/")
+
+    def test_shell_substitution_in_a_name_stays_literal(self):
+        marker = Path(tempfile.mkdtemp()) / "ran"
+        word = bearings_sweep.remote_word(f"~/$(touch {marker})")
+        subprocess.run(["sh", "-c", f"echo {word}"], capture_output=True,
+                       env={"HOME": "/tmp", "PATH": os.environ["PATH"]})
+        self.assertFalse(marker.exists())
+
+
+class TestDiscoveryTimeout(unittest.TestCase):
+    machine = {"ssh": "h", "dirs": ["/code"]}
+
+    def test_ssh_timeout_in_the_listing_phase_means_unreachable(self):
+        with mock.patch.object(bearings_sweep, "run",
+                               side_effect=subprocess.TimeoutExpired("ssh", 1)):
+            self.assertIsNone(bearings_sweep.remote_projects(self.machine, lambda n, g: True))
+
+    def test_ssh_timeout_in_the_scan_phase_means_unreachable(self):
+        with mock.patch.object(bearings_sweep, "run") as run:
+            run.side_effect = [mock.Mock(returncode=0, stdout="git|/code/a/\n"),
+                               subprocess.TimeoutExpired("ssh", 1)]
+            self.assertIsNone(bearings_sweep.remote_projects(self.machine, lambda n, g: True))
+
+    def test_ssh_call_has_a_timeout(self):
+        with mock.patch.object(bearings_sweep, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout="")
+            bearings_sweep.remote_projects(self.machine)
+        self.assertEqual(run.call_args.kwargs["timeout"], bearings_sweep.DISCOVERY_TIMEOUT)
+
+    def test_local_git_timeout_skips_only_that_project(self):
+        base = Path(tempfile.mkdtemp())
+        (base / "slow" / ".git").mkdir(parents=True)
+        with mock.patch.object(bearings_sweep, "run",
+                               side_effect=subprocess.TimeoutExpired("git", 1)):
+            self.assertEqual(bearings_sweep.local_projects([str(base)]), [])
 
 
 def hostile_repo(base):

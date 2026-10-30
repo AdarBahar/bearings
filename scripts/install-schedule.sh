@@ -68,10 +68,23 @@ else
     # cron passes the line to sh, and treats an unescaped % as a newline.
     CMD="$(printf '%q %q >> %q 2>&1' "$PYTHON" "$SCRIPT_DIR/bearings_sweep.py" "$HOME/.bearings/sweep.log")"
     CRON_LINE="${TIME##*:} ${TIME%%:*} * * * ${CMD//%/\\%} # bearings-sweep"
+    # KEPT: the crontab without the Bearings entry. An absent crontab is empty;
+    # any other listing error stops the script.
+    read_kept() {
+      local all
+      if ! all="$(crontab -l 2>&1)"; then
+        if printf '%s' "$all" | grep -qi 'no crontab'; then all=""
+        else echo "bearings: cannot read the crontab: $all" >&2; exit 1; fi
+      fi
+      KEPT="$(printf '%s\n' "$all" | grep -v '# bearings-sweep' || true)"
+    }
     if [ "${1:-}" = "--uninstall" ]; then
-      crontab -l 2>/dev/null | grep -v '# bearings-sweep' | crontab -; echo "bearings: schedule removed"; exit 0
+      read_kept
+      if [ -n "$KEPT" ]; then printf '%s\n' "$KEPT" | crontab -; else crontab -r 2>/dev/null || true; fi
+      echo "bearings: schedule removed"; exit 0
     fi
-    (crontab -l 2>/dev/null | grep -v '# bearings-sweep'; echo "$CRON_LINE") | crontab -
+    read_kept
+    { [ -z "$KEPT" ] || printf '%s\n' "$KEPT"; printf '%s\n' "$CRON_LINE"; } | crontab -
     echo "bearings: cron entry installed — daily $TIME (log: ~/.bearings/sweep.log)"
   fi
 fi
