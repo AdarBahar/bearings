@@ -43,6 +43,54 @@ class TestLocalFilter(unittest.TestCase):
         run.assert_not_called()
 
 
+def hostile_repo(base):
+    """A repo whose config names a signature program, and whose newest commit
+    carries a (fake) signature. `git log` with log.showSignature=true runs the
+    program. Returns (repo, marker); the marker file exists only if it ran."""
+    repo = base / "evil"
+    repo.mkdir()
+    marker = base / "ran"
+    prog = base / "gpg.sh"
+    prog.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n")
+    prog.chmod(0o755)
+    git = ["git", "-C", str(repo)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    for k, v in (("user.email", "t@t"), ("user.name", "t"), ("gpg.program", str(prog)),
+                 ("log.showSignature", "true")):
+        subprocess.run([*git, "config", k, v], check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+    head = subprocess.run([*git, "cat-file", "commit", "HEAD"], capture_output=True,
+                          text=True, check=True).stdout
+    header, _, msg = head.partition("\n\n")
+    signed = header + "\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n abc\n -----END PGP SIGNATURE-----\n\n" + msg
+    sha = subprocess.run([*git, "hash-object", "-t", "commit", "-w", "--stdin"], input=signed,
+                         capture_output=True, text=True, check=True).stdout.strip()
+    subprocess.run([*git, "update-ref", "HEAD", sha], check=True)
+    return repo, marker
+
+
+class TestGitHardening(unittest.TestCase):
+    def test_setup_really_triggers_the_program_without_the_options(self):
+        repo, marker = hostile_repo(Path(tempfile.mkdtemp()))
+        subprocess.run(["git", "-C", str(repo), "log", "-1", "--format=%ct"], capture_output=True)
+        self.assertTrue(marker.exists(), "test setup is wrong: the program did not run")
+
+    def test_local_discovery_does_not_run_the_program(self):
+        base = Path(tempfile.mkdtemp())
+        repo, marker = hostile_repo(base)
+        out = bearings_sweep.local_projects([str(base)])
+        self.assertEqual([o[0] for o in out], ["evil"])
+        self.assertFalse(marker.exists())
+
+    def test_remote_script_does_not_run_the_program(self):
+        base = Path(tempfile.mkdtemp())
+        repo, marker = hostile_repo(base)
+        script = bearings_sweep.remote_script({"dirs": [str(base)]})
+        out = subprocess.run(["bash", "-c", script], capture_output=True, text=True).stdout
+        self.assertIn("evil|", out)
+        self.assertFalse(marker.exists())
+
+
 class TestRemoteFilter(unittest.TestCase):
     machine = {"ssh": "h", "dirs": ["/code"]}
 

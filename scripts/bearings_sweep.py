@@ -253,7 +253,7 @@ def local_projects(dirs, wanted=None):
             if wanted and not wanted(d.name, is_git):
                 continue
             if is_git:
-                r = run(["git", "-C", str(d), "log", "-1", "--format=%ct"])
+                r = run(["git", *GIT_SAFE, "-C", str(d), "log", "-1", "--format=%ct"])
                 stamp = stamp_from_epoch(r.stdout.strip())
             else:
                 stamp = newest_mtime_local(d)
@@ -269,6 +269,11 @@ def local_projects(dirs, wanted=None):
 STAMP_PY = "%Y-%m-%dT%H:%M"
 # Clock skew between the machine and the model's clock that wrote `updated`.
 STAMP_TOLERANCE = timedelta(minutes=2)
+
+# Options for every git call on a project folder. A project's own .git/config
+# is not trusted: a signature check can run a program that the config names
+# (gpg.program), and the other two settings can start a helper or a pager.
+GIT_SAFE = ["--no-pager", "-c", "core.fsmonitor=false", "-c", "log.showSignature=false"]
 
 MTIME_PRUNE = ["node_modules", ".git", ".venv", "__pycache__", "data", "uploads"]
 
@@ -315,7 +320,7 @@ for d in {remote_dirs(machine, paths)}; do
   [ -d "$d" ] || continue
   n=$(basename "$d")
   if [ -d "$d/.git" ]; then
-    echo "$n|$(git -C "$d" log -1 --format=%ct 2>/dev/null)|git|$d"
+    echo "$n|$(git {shlex.join(GIT_SAFE)} -C "$d" log -1 --format=%ct 2>/dev/null)|git|$d"
   else
     dt=$(find "$d" -mindepth 1 \\( -type d \\( {prune} \\) -prune \\) -o \\
          \\( -type f -not -name "*.log" -not -name "*.pid" -printf "%T@\\n" \\) \\
