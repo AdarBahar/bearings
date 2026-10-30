@@ -238,7 +238,9 @@ def stamp_from_epoch(text):
         return None
 
 
-def local_projects(dirs):
+def local_projects(dirs, wanted=None):
+    """wanted(name, is_git) -> bool runs before the scan, so an excluded folder
+    costs no git call and no file walk."""
     out = []
     for base in dirs:
         basep = Path(base)
@@ -248,6 +250,8 @@ def local_projects(dirs):
             if not d.is_dir():
                 continue
             is_git = (d / ".git").is_dir()
+            if wanted and not wanted(d.name, is_git):
+                continue
             if is_git:
                 r = run(["git", "-C", str(d), "log", "-1", "--format=%ct"])
                 stamp = stamp_from_epoch(r.stdout.strip())
@@ -284,27 +288,63 @@ def newest_mtime_local(d):
     return datetime.fromtimestamp(newest).strftime(STAMP_PY) if newest else None
 
 
-def remote_script(machine):
-    prune = " ".join(f'-not -path "*/{p}/*"' for p in MTIME_PRUNE)
-    # The glob stays outside the quotes; the directory name is quoted.
-    dirs = " ".join(f"{shlex.quote(d)}/*/" for d in machine["dirs"])
+def remote_dirs(machine, paths=None):
+    """The shell words for the project folders: the given paths, or every
+    subfolder of each base folder. The glob stays outside the quotes; the
+    directory name is quoted."""
+    if paths is not None:
+        return " ".join(shlex.quote(d) for d in paths)
+    return " ".join(f"{shlex.quote(d)}/*/" for d in machine["dirs"])
+
+
+def remote_list_script(machine):
+    """One line per project folder: git|<path> or dir|<path>. No git call and
+    no file walk, so the sweep can drop excluded folders first."""
     return f'''
-for d in {dirs}; do
+for d in {remote_dirs(machine)}; do
+  [ -d "$d" ] || continue
+  if [ -d "$d/.git" ]; then echo "git|$d"; else echo "dir|$d"; fi
+done'''
+
+
+def remote_script(machine, paths=None):
+    # -prune stops find from entering these folders, so it never lists them.
+    prune = " -o ".join(f'-name "{p}"' for p in MTIME_PRUNE)
+    return f'''
+for d in {remote_dirs(machine, paths)}; do
   [ -d "$d" ] || continue
   n=$(basename "$d")
   if [ -d "$d/.git" ]; then
     echo "$n|$(git -C "$d" log -1 --format=%ct 2>/dev/null)|git|$d"
   else
-    dt=$(find "$d" -type f {prune} -not -name "*.log" -not -name "*.pid" \
-         -printf "%T@\n" 2>/dev/null | sort -rn | head -1)
+    dt=$(find "$d" -mindepth 1 \\( -type d \\( {prune} \\) -prune \\) -o \\
+         \\( -type f -not -name "*.log" -not -name "*.pid" -printf "%T@\\n" \\) \\
+         2>/dev/null | sort -rn | head -1)
     echo "$n|$dt|dir|$d"
   fi
 done'''
 
 
-def remote_projects(machine):
-    script = remote_script(machine)
-    r = run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", machine["ssh"], script])
+def ssh_run(machine, script):
+    return run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", machine["ssh"], script])
+
+
+def remote_projects(machine, wanted=None):
+    """wanted(name, is_git) -> bool filters the folders before the slow scan.
+    Without it, the sweep scans every folder in one call."""
+    paths = None
+    if wanted:
+        r = ssh_run(machine, remote_list_script(machine))
+        if r.returncode != 0:
+            return None
+        paths = []
+        for line in r.stdout.splitlines():
+            kind, _, path = line.partition("|")
+            if path and wanted(os.path.basename(path.rstrip("/")), kind == "git"):
+                paths.append(path)
+        if not paths:
+            return []
+    r = ssh_run(machine, remote_script(machine, paths))
     if r.returncode != 0:
         return None
     out = []
@@ -1087,7 +1127,12 @@ def run_sweep():
     start_time = datetime.now()
 
     for machine in cfg["machines"]:
-        projects = local_projects(machine["dirs"]) if machine["ssh"] is None else remote_projects(machine)
+        def wanted(raw_name, is_git, machine=machine):
+            has_note = note_updated(vault, cfg["aliases"].get(raw_name, raw_name)) is not None
+            return allowed(cfg, machine["name"], raw_name, is_git, has_note)
+
+        projects = (local_projects(machine["dirs"], wanted) if machine["ssh"] is None
+                    else remote_projects(machine, wanted))
         if projects is None:
             unreachable.append(machine["name"])
             continue
