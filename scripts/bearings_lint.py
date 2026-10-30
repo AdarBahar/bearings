@@ -118,19 +118,22 @@ def collect_names(vault):
     root-relative paths for partial-path links."""
     root = find_obsidian_root(vault)
     exact, paths = set(), []
-    for p in root.rglob("*"):
-        suffix = p.suffix.lower()
-        if suffix not in NOTE_SUFFIXES | ATTACHMENT_SUFFIXES or not p.is_file():
-            continue
-        rel = p.relative_to(root)
-        if any(part.startswith(".") for part in rel.parts) or "_templates" in rel.parts:
-            continue
-        exact.update({p.name, str(rel)})
-        paths.append(str(rel))
-        # Only a note resolves without its extension.
-        if suffix in NOTE_SUFFIXES:
-            exact.update({p.stem, str(rel.with_suffix(""))})
-            paths.append(str(rel.with_suffix("")))
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Prune hidden folders and templates, so the walk never enters them.
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "_templates"]
+        for name in filenames:
+            p = Path(dirpath, name)
+            suffix = p.suffix.lower()
+            if (suffix not in NOTE_SUFFIXES | ATTACHMENT_SUFFIXES or name.startswith(".")
+                    or not p.is_file()):
+                continue
+            rel = p.relative_to(root)
+            exact.update({p.name, str(rel)})
+            paths.append(str(rel))
+            # Only a note resolves without its extension.
+            if suffix in NOTE_SUFFIXES:
+                exact.update({p.stem, str(rel.with_suffix(""))})
+                paths.append(str(rel.with_suffix("")))
     return exact, paths
 
 
@@ -143,6 +146,12 @@ def link_resolves(target, names):
         suffix = "/" + target
         return any(p.endswith(suffix) for p in paths)
     return False
+
+
+def is_linted(text):
+    """True when the note text has a frontmatter with a recognized `type:`."""
+    fm = parse_frontmatter(text)
+    return fm is not None and isinstance(fm.get("type"), str) and fm["type"] in NOTE_TYPES
 
 
 def lint_file(path, vault, names):
