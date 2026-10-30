@@ -130,6 +130,51 @@ class TestMainWiring(unittest.TestCase):
         self.assertIn("- [x] app @mac", self.dash())
         self.assertNotIn("last_run", bearings_sweep.load_state())
 
+    def test_report_alone_ignores_the_schedule_gates(self):
+        import json
+        from datetime import date
+        cfg = self.vault / "_Config.md"
+        cfg.write_text(cfg.read_text().replace("cadence: daily", "cadence: manual"))
+        (self.tmp / ".bearings" / "state.json").write_text(
+            json.dumps({"last_run": date.today().isoformat()}))
+        with mock.patch.object(sys, "argv", ["bearings_sweep.py", "--report"]), \
+             mock.patch.object(bearings_sweep, "skills_canary") as canary, \
+             mock.patch.object(bearings_sweep, "run_claude") as run_claude:
+            self.assertEqual(bearings_sweep.main(), 0)
+        canary.assert_not_called()
+        run_claude.assert_not_called()
+        self.assertIn("Actions: none (report-only)", self.dash())
+        self.assertEqual(bearings_sweep.load_state()["last_run"],
+                         date.today().isoformat())
+
+    def test_replace_section_keeps_backslashes_literal(self):
+        start, end = bearings_sweep.MARK["pending"]
+        text = f"{start}\nold\n{end}\n"
+        out = bearings_sweep.replace_section(text, "pending", r"- app\q \1 \b")
+        self.assertIn(r"- app\q \1 \b", out)
+
+    def test_charge_survives_a_dashboard_write_failure(self):
+        import json
+        from datetime import date
+        (self.vault / "_Config.md").write_text(
+            (self.vault / "_Config.md").read_text().replace(
+                "create_new: ask", "create_new: auto"))
+        with mock.patch.object(bearings_sweep, "skills_canary",
+                               return_value=(True, 0.5, 10, 2, {})), \
+             mock.patch.object(bearings_sweep, "run_claude",
+                               return_value=(True, 1.0, 100, 20,
+                                             {"m": {"cost": 1.0, "in": 100, "out": 20}})), \
+             mock.patch.object(bearings_sweep, "replace_section",
+                               side_effect=OSError("disk")):
+            with self.assertRaises(OSError):
+                bearings_sweep.main()
+        month = date.today().strftime("%Y-%m")
+        mo = json.loads((self.tmp / ".bearings" / "state.json").read_text())["months"][month]
+        self.assertAlmostEqual(mo["cost"], 1.5)
+        self.assertEqual(mo["t_in"], 110)
+        runs = json.loads((self.tmp / ".bearings" / "state.json").read_text())["runs"]
+        self.assertAlmostEqual(sum(r["cost"] for r in runs), 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
