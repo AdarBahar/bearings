@@ -223,7 +223,7 @@ def local_projects(dirs):
                 continue
             is_git = (d / ".git").is_dir()
             if is_git:
-                r = run(["git", "-C", str(d), "log", "-1", "--format=%ad", "--date=short"])
+                r = run(["git", "-C", str(d), "log", "-1", "--format=%cd", f"--date={STAMP_GIT}"])
                 stamp = r.stdout.strip()
             else:
                 stamp = newest_mtime_local(d)
@@ -231,6 +231,13 @@ def local_projects(dirs):
                 out.append((d.name, stamp, is_git, str(d)))
     return out
 
+
+# A stamp is local time to the minute, so a change after a refresh on the
+# same day still counts as new. The format works for git and for find.
+STAMP_GIT = "format-local:%Y-%m-%dT%H:%M"
+STAMP_PY = "%Y-%m-%dT%H:%M"
+# Clock skew between the machine and the model's clock that wrote `updated`.
+STAMP_TOLERANCE = timedelta(minutes=2)
 
 MTIME_PRUNE = ["node_modules", ".git", ".venv", "__pycache__", "data", "uploads"]
 
@@ -247,7 +254,7 @@ def newest_mtime_local(d):
                 newest = max(newest or ts, ts)
             except OSError:
                 pass
-    return date.fromtimestamp(newest).isoformat() if newest else None
+    return datetime.fromtimestamp(newest).strftime(STAMP_PY) if newest else None
 
 
 def remote_projects(machine):
@@ -258,10 +265,10 @@ for d in {dirs}; do
   [ -d "$d" ] || continue
   n=$(basename "$d")
   if [ -d "$d/.git" ]; then
-    echo "$n|$(git -C "$d" log -1 --format=%ad --date=short 2>/dev/null)|git|$d"
+    echo "$n|$(git -C "$d" log -1 --format=%cd --date={STAMP_GIT} 2>/dev/null)|git|$d"
   else
     dt=$(find "$d" -type f {prune} -not -name "*.log" -not -name "*.pid" \
-         -printf "%TY-%Tm-%Td\\n" 2>/dev/null | sort -r | head -1)
+         -printf "%TY-%Tm-%TdT%TH:%TM\\n" 2>/dev/null | sort -r | head -1)
     echo "$n|$dt|dir|$d"
   fi
 done'''
@@ -296,8 +303,16 @@ def note_updated(vault, name):
 
 
 def is_stale(stamp, updated):
-    """stamp is YYYY-MM-DD; updated can also carry a time (YYYY-MM-DDTHH:MM)."""
-    return stamp > updated[:10]
+    """stamp and updated are YYYY-MM-DD, or YYYY-MM-DDTHH:MM. When both carry a
+    time, compare the times, with a small tolerance for clock skew. Otherwise
+    compare the dates."""
+    if len(stamp) > 10 and len(updated) > 10:
+        try:
+            return (datetime.fromisoformat(stamp)
+                    > datetime.fromisoformat(updated) + STAMP_TOLERANCE)
+        except ValueError:
+            pass
+    return stamp[:10] > updated[:10]
 
 
 def replace_section(text, key, content):
