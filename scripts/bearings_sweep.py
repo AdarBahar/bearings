@@ -396,7 +396,7 @@ def replace_section(text, key, content):
     start, end = MARK[key]
     block = f"{start}\n{content}\n{end}"
     if start in text and end in text:
-        return re.sub(re.escape(start) + r".*?" + re.escape(end), block, text, flags=re.DOTALL)
+        return re.sub(re.escape(start) + r".*?" + re.escape(end), lambda _: block, text, flags=re.DOTALL)
     return text.rstrip() + "\n\n" + block + "\n"
 
 
@@ -1114,7 +1114,7 @@ def run_sweep():
         state["last_good_config"] = cfg
 
     today = date.today()
-    if not force:
+    if not force and not report_only:
         if cfg["cadence"] == "manual":
             return 0
         if cfg["cadence"].startswith("weekly-") and WEEKDAYS[today.weekday()] != cfg["cadence"].split("-", 1)[1]:
@@ -1175,6 +1175,16 @@ def run_sweep():
     spent_before = float(state.get("months", {}).get(month_key, {}).get("cost", 0.0))
     budget_stopped = False
 
+    months = state.setdefault("months", {})
+    mo = months.setdefault(month_key, {"runs": 0, "cost": 0.0, "t_in": 0, "t_out": 0})
+
+    def bill(c, ti, to):
+        # Save each paid call at once, so a later failure cannot lose it.
+        nonlocal cost, t_in, t_out
+        cost += c; t_in += ti; t_out += to
+        mo["cost"] += c; mo["t_in"] += int(ti); mo["t_out"] += int(to)
+        save_state(state)
+
     def over_stop():
         return bool(stop) and spent_before + cost >= stop
 
@@ -1187,7 +1197,7 @@ def run_sweep():
     canary_ok = True
     if not budget_stopped and ((do_refresh and stale) or creates):
         canary_ok, c, ti, to, models = skills_canary(env, model)
-        cost += c; t_in += ti; t_out += to
+        bill(c, ti, to)
         record_runs(state, today, "canary", "-", models)
         if not canary_ok:
             warnings.append("canary FAILED — headless runs do not load the "
@@ -1208,7 +1218,7 @@ def run_sweep():
                 break
             attempted = True
             good, c, ti, to, models = run_claude(env, vault, machine, path, warnings, model)
-            cost += c; t_in += ti; t_out += to
+            bill(c, ti, to)
             record_runs(state, today, "refresh", name, models)
             actions.append(f"refreshed {name}" if good else f"refresh FAILED {name}")
 
@@ -1223,7 +1233,7 @@ def run_sweep():
             if approve and not report_only and canary_ok and not budget_stopped:
                 attempted = True
                 good, c, ti, to, models = run_claude(env, vault, machine, path, warnings, model)
-                cost += c; t_in += ti; t_out += to
+                bill(c, ti, to)
                 record_runs(state, today, "create", name, models)
                 actions.append(f"created {name}" if good else f"create FAILED {name}")
             elif (name, machine["name"]) in approved or (approve and not report_only):
@@ -1256,9 +1266,7 @@ def run_sweep():
                             "run scripts/bearings_lint.py")
 
     # ---- dashboard ----
-    months = state.setdefault("months", {})
-    mo = months.setdefault(month_key, {"runs": 0, "cost": 0.0, "t_in": 0, "t_out": 0})
-    mo["runs"] += 1; mo["cost"] += cost; mo["t_in"] += int(t_in); mo["t_out"] += int(t_out)
+    mo["runs"] += 1
 
     dur = int((datetime.now() - start_time).total_seconds())
     last = (f"**{today} {datetime.now().strftime('%H:%M')}** — "
