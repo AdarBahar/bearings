@@ -70,6 +70,19 @@ class TestCronFallback(unittest.TestCase):
         self.assertIn("schedule removed", r.stdout)
         self.assertFalse(self.store.exists())
 
+    def test_uninstall_reports_a_failed_removal(self):
+        self.store.write_text("0 9 * * * old # bearings-sweep\n")
+        (self.tmp / "bin" / "crontab").write_text(
+            '#!/bin/bash\nif [ "$1" = "-l" ]; then cat "$FAKE_DIR/crontab.txt"; '
+            'else echo "permission denied" >&2; exit 1; fi\n')
+        r = self.run_script("--uninstall")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("schedule removed", r.stdout)
+
+    def test_uninstall_without_a_crontab_succeeds(self):
+        r = self.run_script("--uninstall")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_a_real_listing_error_stops_the_script(self):
         (self.tmp / "bin" / "crontab").write_text(
             '#!/bin/bash\n[ "$1" = "-l" ] && { echo "permission denied" >&2; exit 1; }\ncat > "$FAKE_DIR/crontab.txt"\n')

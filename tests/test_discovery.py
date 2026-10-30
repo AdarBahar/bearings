@@ -62,6 +62,13 @@ class TestGitfile(unittest.TestCase):
         cfg = {"include": ["*"], "exclude": []}
         self.assertTrue(bearings_sweep.allowed(cfg, "m", "wt", True, False))
 
+    def test_a_fifo_named_git_does_not_block(self):
+        base = Path(tempfile.mkdtemp())
+        (base / "evil").mkdir()
+        os.mkfifo(base / "evil" / ".git")
+        d = base / "evil"
+        self.assertFalse(bearings_sweep.is_git_folder(d))
+
     def test_remote_scripts_test_for_a_gitfile(self):
         m = {"ssh": "h", "dirs": ["/code"]}
         self.assertIn("gitdir:", bearings_sweep.remote_list_script(m))

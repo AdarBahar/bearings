@@ -15,6 +15,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import uuid
@@ -245,9 +246,13 @@ def is_git_folder(d):
     """True for a normal repository (.git folder), and for a linked worktree
     or submodule (.git file that starts with 'gitdir:')."""
     g = d / ".git"
-    if g.is_dir():
-        return True
     try:
+        mode = os.lstat(g).st_mode
+        if stat.S_ISDIR(mode):
+            return True
+        # Open a regular file only. A pipe or device would block the read.
+        if not stat.S_ISREG(mode):
+            return False
         with open(g, "rb") as f:
             return f.read(7) == b"gitdir:"
     except OSError:

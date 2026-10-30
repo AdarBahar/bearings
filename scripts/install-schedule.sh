@@ -72,15 +72,16 @@ else
     # any other listing error stops the script.
     read_kept() {
       local all
+      HAD_CRONTAB=1
       if ! all="$(crontab -l 2>&1)"; then
-        if printf '%s' "$all" | grep -qi 'no crontab'; then all=""
+        if printf '%s' "$all" | grep -qi 'no crontab'; then all=""; HAD_CRONTAB=0
         else echo "bearings: cannot read the crontab: $all" >&2; exit 1; fi
       fi
       KEPT="$(printf '%s\n' "$all" | grep -v '# bearings-sweep' || true)"
     }
     if [ "${1:-}" = "--uninstall" ]; then
       read_kept
-      if [ -n "$KEPT" ]; then printf '%s\n' "$KEPT" | crontab -; else crontab -r 2>/dev/null || true; fi
+      if [ -n "$KEPT" ]; then printf '%s\n' "$KEPT" | crontab -; elif [ "$HAD_CRONTAB" = 1 ]; then crontab -r; fi
       echo "bearings: schedule removed"; exit 0
     fi
     read_kept
