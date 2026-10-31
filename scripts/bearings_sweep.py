@@ -15,6 +15,7 @@ import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import uuid
@@ -130,8 +131,11 @@ def parse_machines(items, errors):
                 errors.append(f"machine {name}: expected 'local' or 'ssh=<alias>', got {how!r}")
                 continue
             ssh = how[4:]
+        # A local path expands here. A remote path keeps its "~", which the
+        # remote shell resolves against the remote HOME.
+        expand = os.path.expanduser if ssh is None else (lambda d: d)
         machines.append({"name": name, "ssh": ssh,
-                         "dirs": [os.path.expanduser(d.strip()) for d in dirs.split(",") if d.strip()]})
+                         "dirs": [expand(d.strip()) for d in dirs.split(",") if d.strip()]})
     return machines
 
 
@@ -238,6 +242,23 @@ def stamp_from_epoch(text):
         return None
 
 
+def is_git_folder(d):
+    """True for a normal repository (.git folder), and for a linked worktree
+    or submodule (.git file that starts with 'gitdir:')."""
+    g = d / ".git"
+    try:
+        mode = os.lstat(g).st_mode
+        if stat.S_ISDIR(mode):
+            return True
+        # Open a regular file only. A pipe or device would block the read.
+        if not stat.S_ISREG(mode):
+            return False
+        with open(g, "rb") as f:
+            return f.read(7) == b"gitdir:"
+    except OSError:
+        return False
+
+
 def local_projects(dirs, wanted=None):
     """wanted(name, is_git) -> bool runs before the scan, so an excluded folder
     costs no git call and no file walk."""
@@ -249,12 +270,16 @@ def local_projects(dirs, wanted=None):
         for d in sorted(basep.iterdir()):
             if not d.is_dir():
                 continue
-            is_git = (d / ".git").is_dir()
+            is_git = is_git_folder(d)
             if wanted and not wanted(d.name, is_git):
                 continue
             if is_git:
-                r = run(["git", *GIT_SAFE, "-C", str(d), "log", "-1", "--format=%ct"])
-                stamp = stamp_from_epoch(r.stdout.strip())
+                try:
+                    r = run(["git", *GIT_SAFE, "-C", str(d), "log", "-1", "--format=%ct"],
+                            timeout=DISCOVERY_TIMEOUT)
+                    stamp = stamp_from_epoch(r.stdout.strip())
+                except subprocess.TimeoutExpired:
+                    stamp = None
             else:
                 stamp = newest_mtime_local(d)
             if stamp:
@@ -274,6 +299,14 @@ STAMP_TOLERANCE = timedelta(minutes=2)
 # is not trusted: a signature check can run a program that the config names
 # (gpg.program), and the other two settings can start a helper or a pager.
 GIT_SAFE = ["--no-pager", "-c", "core.fsmonitor=false", "-c", "log.showSignature=false"]
+
+# Seconds. A discovery call that takes longer counts as failed, so one stuck
+# machine cannot hold the sweep lock for ever.
+DISCOVERY_TIMEOUT = 300
+
+# Shell test for a git folder: a .git folder, or a .git file (worktree or
+# submodule) that starts with 'gitdir:'.
+SH_IS_GIT = '{ [ -d "$d/.git" ] || { [ -f "$d/.git" ] && grep -q "^gitdir:" "$d/.git" 2>/dev/null; }; }'
 
 MTIME_PRUNE = ["node_modules", ".git", ".venv", "__pycache__", "data", "uploads"]
 
@@ -298,8 +331,18 @@ def remote_dirs(machine, paths=None):
     subfolder of each base folder. The glob stays outside the quotes; the
     directory name is quoted."""
     if paths is not None:
-        return " ".join(shlex.quote(d) for d in paths)
-    return " ".join(f"{shlex.quote(d)}/*/" for d in machine["dirs"])
+        return " ".join(remote_word(d) for d in paths)
+    return " ".join(f"{remote_word(d).rstrip('/')}/*/" for d in machine["dirs"])
+
+
+def remote_word(path):
+    """One quoted shell word. A leading '~' or '~/' becomes "$HOME", the only
+    expansion allowed; the rest of the path stays inside single quotes."""
+    if path == "~":
+        return '"$HOME"'
+    if path.startswith("~/"):
+        return '"$HOME"/' + shlex.quote(path[2:])
+    return shlex.quote(path)
 
 
 def remote_list_script(machine):
@@ -308,7 +351,7 @@ def remote_list_script(machine):
     return f'''
 for d in {remote_dirs(machine)}; do
   [ -d "$d" ] || continue
-  if [ -d "$d/.git" ]; then echo "git|$d"; else echo "dir|$d"; fi
+  if {SH_IS_GIT}; then echo "git|$d"; else echo "dir|$d"; fi
 done'''
 
 
@@ -319,7 +362,7 @@ def remote_script(machine, paths=None):
 for d in {remote_dirs(machine, paths)}; do
   [ -d "$d" ] || continue
   n=$(basename "$d")
-  if [ -d "$d/.git" ]; then
+  if {SH_IS_GIT}; then
     echo "$n|$(git {shlex.join(GIT_SAFE)} -C "$d" log -1 --format=%ct 2>/dev/null)|git|$d"
   else
     dt=$(find "$d" -mindepth 1 \\( -type d \\( {prune} \\) -prune \\) -o \\
@@ -331,7 +374,12 @@ done'''
 
 
 def ssh_run(machine, script):
-    return run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", machine["ssh"], script])
+    cmd = ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", machine["ssh"], script]
+    try:
+        return run(cmd, timeout=DISCOVERY_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        # 124 is the exit code of the timeout command; the caller sees a failure.
+        return subprocess.CompletedProcess(cmd, 124, "", "timeout")
 
 
 def remote_projects(machine, wanted=None):
